@@ -1,6 +1,3 @@
-/* global module, require */
-require = require("esm")(module, true);
+// index.js
+require = require("esm")(module);
 module.exports = require("./YahooFantasy.mjs").default;
-
-// TODO: league settings sample data
-// TODO: transactions sample data
