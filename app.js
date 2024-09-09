@@ -1,5 +1,7 @@
 // app.js
+require = require("esm")(module/*, options*/);
 const YahooFantasy = require('./index.js');
+
 
 const yf = new YahooFantasy(
   process.env.YAHOO_APPLICATION_KEY,

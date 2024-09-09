@@ -8,7 +8,7 @@
     "require": "./index.js"
   },
   "scripts": {
-    "start": "node server.js",
+    "start": "node -r esm app.js",
     "dev": "nodemon server.js",
     "test": "node -r esm jasmine-runner.js",
     "istanbul": "istanbul cover --include-all-sources jasmine-node tests"
