@@ -22,7 +22,12 @@ app.get('/', (req, res) => {
 });
 
 app.get('/auth/yahoo', (req, res) => {
-  yf.auth(res);
+  try {
+    yf.auth(res);
+  } catch (error) {
+    console.error('Error in /auth/yahoo route:', error);
+    res.status(500).send('Internal Server Error');
+  }
 });
 
 app.get('/auth/yahoo/callback', (req, res) => {
