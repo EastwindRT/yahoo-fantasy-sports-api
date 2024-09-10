@@ -5,15 +5,22 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 10000;
+
+// Error logging middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send('Something broke!');
+});
 
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
 console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
-console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI ? 'Set' : 'Not set');
+console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI);
 
 const yf = new YahooFantasy(
   process.env.YAHOO_APPLICATION_KEY,
   process.env.YAHOO_APPLICATION_SECRET,
+  null, // Token (we'll get this after authentication)
   process.env.YAHOO_REDIRECT_URI
 );
 
@@ -22,22 +29,19 @@ app.get('/', (req, res) => {
 });
 
 app.get('/auth/yahoo', (req, res) => {
-  try {
-    yf.auth(res);
-  } catch (error) {
-    console.error('Error in /auth/yahoo route:', error);
-    res.status(500).send('Internal Server Error');
-  }
+  const authorizationUrl = yf.auth().url();
+  console.log('Authorization URL:', authorizationUrl); // Add this line for debugging
+  res.redirect(authorizationUrl);
 });
 
 app.get('/auth/yahoo/callback', (req, res) => {
-  yf.auth().getAccessToken(req, (err, data) => {
+  yf.auth().token(req.query.code, (err, token) => {
     if (err) {
       console.error('Authentication error:', err);
       res.status(500).json({ error: 'Authentication failed', details: err.message });
     } else {
       // Store the token securely - in a real app, you'd use a database or secure session
-      global.yahooToken = data.access_token;
+      global.yahooToken = token;
       res.redirect('/dashboard');
     }
   });
@@ -90,6 +94,15 @@ app.get('/team/:team_key/roster', (req, res) => {
     } else {
       res.json(data);
     }
+  });
+});
+
+// Debug route to check environment variables
+app.get('/debug', (req, res) => {
+  res.json({
+    YAHOO_APPLICATION_KEY: process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set',
+    YAHOO_APPLICATION_SECRET: process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set',
+    YAHOO_REDIRECT_URI: process.env.YAHOO_REDIRECT_URI
   });
 });
 
