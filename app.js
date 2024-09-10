@@ -6,6 +6,9 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
+console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
+
 const yf = new YahooFantasy(
   process.env.YAHOO_APPLICATION_KEY,
   process.env.YAHOO_APPLICATION_SECRET
@@ -21,7 +24,7 @@ app.get('/nba/game', async (req, res) => {
     res.json(data);
   } catch (error) {
     console.error('Error fetching NBA game data:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    res.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
 });
 

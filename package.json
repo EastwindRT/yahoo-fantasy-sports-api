@@ -14,7 +14,7 @@
     "url": "git+https://github.com/EastwindRT/yahoo-fantasy-app.git"
   },
   "engines": {
-    "node": ">=14.0.0"
+    "node": "14.x"
   },
   "keywords": [
     "yahoo",

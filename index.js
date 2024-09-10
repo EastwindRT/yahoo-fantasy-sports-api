@@ -1,3 +1,3 @@
 // index.js
-require = require("esm")(module);
-module.exports = require("./YahooFantasy.mjs").default;
+const YahooFantasy = require('yahoo-fantasy');
+module.exports = YahooFantasy;
