@@ -1,5 +1,5 @@
 // app.js
-require = require("esm")(module/*, options*/);
+
 const YahooFantasy = require('./index.js');
 
 
