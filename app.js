@@ -1,6 +1,5 @@
-// app.js
-const YahooFantasy = require('./index.js');
 const express = require('express');
+const YahooFantasy = require('yahoo-fantasy');
 const dotenv = require('dotenv');
 
 dotenv.config();
@@ -15,7 +14,6 @@ console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI ? 'Set' : 'Not
 const yf = new YahooFantasy(
   process.env.YAHOO_APPLICATION_KEY,
   process.env.YAHOO_APPLICATION_SECRET,
-  null,
   process.env.YAHOO_REDIRECT_URI
 );
 
@@ -24,18 +22,17 @@ app.get('/', (req, res) => {
 });
 
 app.get('/auth/yahoo', (req, res) => {
-  const authorizationUrl = yf.auth().url();
-  res.redirect(authorizationUrl);
+  yf.auth(res);
 });
 
 app.get('/auth/yahoo/callback', (req, res) => {
-  yf.auth().token(req.query.code, (err, token) => {
+  yf.auth().getAccessToken(req, (err, data) => {
     if (err) {
       console.error('Authentication error:', err);
       res.status(500).json({ error: 'Authentication failed', details: err.message });
     } else {
       // Store the token securely - in a real app, you'd use a database or secure session
-      global.yahooToken = token;
+      global.yahooToken = data.access_token;
       res.redirect('/dashboard');
     }
   });
