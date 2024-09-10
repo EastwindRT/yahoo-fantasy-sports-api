@@ -42,7 +42,7 @@
     "jasmine": "^4.5.0",
     "jasmine-spec-reporter": "^7.0.0",
     "nock": "^13.3.0",
-    "prettier": "^2.8.4",
-    "nodemon": "^2.0.15"
+    "nodemon": "^2.0.15",
+    "prettier": "^2.8.4"
   }
 }
