@@ -1,15 +1,18 @@
 const express = require('express');
 const YahooFantasy = require('yahoo-fantasy');
+const { AuthorizationCode } = require('simple-oauth2');
 const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 10000;
 
+// Logging environment variables (be careful not to log sensitive information in production)
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
 console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
 console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI);
 
+// Initialize YahooFantasy
 const yf = new YahooFantasy(
   process.env.YAHOO_APPLICATION_KEY,
   process.env.YAHOO_APPLICATION_SECRET,
@@ -17,43 +20,79 @@ const yf = new YahooFantasy(
   process.env.YAHOO_REDIRECT_URI
 );
 
-console.log('YahooFantasy object:', yf); // Debugging
-console.log('YahooFantasy auth method:', yf.auth); // Debugging
+// Log YahooFantasy object details
+console.log('YahooFantasy object:', JSON.stringify(yf, null, 2));
+console.log('YahooFantasy auth method:', yf.auth ? 'Exists' : 'Does not exist');
+console.log('YahooFantasy auth type:', typeof yf.auth);
 
-app.get('/', (req, res) => {
-  res.send('Yahoo Fantasy API app is running!');
-});
-
-app.get('/auth/yahoo', (req, res) => {
-  try {
-    const authObject = yf.auth();
-    console.log('Auth object:', authObject); // Debugging
-    if (authObject && typeof authObject.url === 'function') {
-      const authorizationUrl = authObject.url();
-      console.log('Authorization URL:', authorizationUrl); // Debugging
-      res.redirect(authorizationUrl);
-    } else {
-      throw new Error('Invalid auth object');
-    }
-  } catch (error) {
-    console.error('Error in /auth/yahoo route:', error);
-    res.status(500).send('Internal Server Error: ' + error.message);
+// Initialize simple-oauth2 client
+const client = new AuthorizationCode({
+  client: {
+    id: process.env.YAHOO_APPLICATION_KEY,
+    secret: process.env.YAHOO_APPLICATION_SECRET
+  },
+  auth: {
+    tokenHost: 'https://api.login.yahoo.com',
+    authorizePath: '/oauth2/request_auth',
+    tokenPath: '/oauth2/get_token'
   }
 });
 
+const redirectUri = process.env.YAHOO_REDIRECT_URI;
+
+// Routes
+app.get('/', (req, res) => {
+  res.send('Yahoo Fantasy API app is running! <a href="/auth/yahoo">Authenticate with Yahoo</a>');
+});
+
+app.get('/check-yf', (req, res) => {
+  res.json({
+    authExists: !!yf.auth,
+    authType: typeof yf.auth,
+    authIsFunction: typeof yf.auth === 'function',
+    authProperties: Object.keys(yf.auth || {})
+  });
+});
+
+app.get('/auth/yahoo', (req, res) => {
+  const authorizationUri = client.authorizeURL({
+    redirect_uri: redirectUri,
+    scope: 'fspt-w',
+  });
+  res.redirect(authorizationUri);
+});
+
 app.get('/auth/yahoo/callback', async (req, res) => {
+  console.log('Entering /auth/yahoo/callback route');
+  console.log('Query parameters:', req.query);
+
+  if (!req.query.code) {
+    console.error('No code provided in callback');
+    return res.status(400).send('No code provided in callback');
+  }
+
   try {
-    const token = await new Promise((resolve, reject) => {
-      yf.auth().token(req.query.code, (err, token) => {
-        if (err) reject(err);
-        else resolve(token);
-      });
-    });
-    global.yahooToken = token;
+    const tokenParams = {
+      code: req.query.code,
+      redirect_uri: redirectUri
+    };
+    const accessToken = await client.getToken(tokenParams);
+    console.log('Access Token:', accessToken.token);
+    
+    // Store the token
+    global.yahooToken = accessToken.token;
+
+    // Use the token to initialize YahooFantasy
+    yf.setUserToken(accessToken.token.access_token);
+    
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
-    res.status(500).json({ error: 'Authentication failed', details: error.message });
+    res.status(500).json({ 
+      error: 'Authentication failed', 
+      details: error.message,
+      stack: error.stack 
+    });
   }
 });
 
@@ -65,7 +104,6 @@ app.get('/dashboard', (req, res) => {
   }
 });
 
-// New route to test API connectivity
 app.get('/test-api', async (req, res) => {
   if (!global.yahooToken) {
     res.redirect('/auth/yahoo');
@@ -82,16 +120,6 @@ app.get('/test-api', async (req, res) => {
       console.error('Error fetching user games:', error);
       res.status(500).json({ error: 'Failed to fetch user games', details: error.message });
     }
-  }
-});
-
-app.get('/nba/game', async (req, res) => {
-  try {
-    const data = await yf.game.meta('nba');
-    res.json(data);
-  } catch (error) {
-    console.error('Error fetching NBA game data:', error);
-    res.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
 });
 
@@ -137,7 +165,7 @@ app.get('/debug', (req, res) => {
 
 // Custom error handler
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Unhandled error:', err);
   res.status(500).send('Something went wrong: ' + err.message);
 });
 
