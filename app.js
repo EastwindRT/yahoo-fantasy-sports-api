@@ -56,20 +56,32 @@ app.get('/check-yf', (req, res) => {
 });
 
 app.get('/auth/yahoo', (req, res) => {
-  const authorizationUri = client.authorizeURL({
-    redirect_uri: redirectUri,
-    scope: 'fspt-w',
-  });
-  res.redirect(authorizationUri);
+  try {
+    const authorizationUri = client.authorizeURL({
+      redirect_uri: redirectUri,
+      scope: 'fspt-w',
+    });
+    console.log('Generated authorization URI:', authorizationUri);
+    res.redirect(authorizationUri);
+  } catch (error) {
+    console.error('Error generating authorization URL:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate authorization URL', 
+      details: error.message,
+      stack: error.stack
+    });
+  }
 });
 
 app.get('/auth/yahoo/callback', async (req, res) => {
   console.log('Entering /auth/yahoo/callback route');
-  console.log('Query parameters:', req.query);
+  console.log('Full request query:', req.query);
+  console.log('Request headers:', req.headers);
 
   if (!req.query.code) {
     console.error('No code provided in callback');
-    return res.status(400).send('No code provided in callback');
+    console.log('Full URL:', req.protocol + '://' + req.get('host') + req.originalUrl);
+    return res.status(400).send('No code provided in callback. Full query: ' + JSON.stringify(req.query));
   }
 
   try {
@@ -77,22 +89,24 @@ app.get('/auth/yahoo/callback', async (req, res) => {
       code: req.query.code,
       redirect_uri: redirectUri
     };
+    console.log('Token params:', tokenParams);
     const accessToken = await client.getToken(tokenParams);
-    console.log('Access Token:', accessToken.token);
-
+    console.log('Access Token received:', accessToken.token);
+    
     // Store the token
     global.yahooToken = accessToken.token;
 
     // Use the token to initialize YahooFantasy
     yf.setUserToken(accessToken.token.access_token);
-
+    
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
     res.status(500).json({ 
       error: 'Authentication failed', 
       details: error.message,
-      stack: error.stack 
+      stack: error.stack,
+      query: req.query
     });
   }
 });
