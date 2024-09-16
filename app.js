@@ -59,7 +59,7 @@ app.get('/auth/yahoo', (req, res) => {
   try {
     const authorizationUri = client.authorizeURL({
       redirect_uri: redirectUri,
-      scope: 'fspt-w',
+      scope: 'openid fspt-r', // Corrected scope for Yahoo Fantasy Sports API
     });
     console.log('Generated authorization URI:', authorizationUri);
     res.redirect(authorizationUri);
@@ -78,6 +78,12 @@ app.get('/auth/yahoo/callback', async (req, res) => {
   console.log('Full request query:', req.query);
   console.log('Request headers:', req.headers);
 
+  if (req.query.error) {
+    console.error('OAuth error:', req.query.error);
+    console.error('Error description:', req.query.error_description);
+    return res.status(400).send(`OAuth error: ${req.query.error}. Description: ${req.query.error_description}`);
+  }
+
   if (!req.query.code) {
     console.error('No code provided in callback');
     console.log('Full URL:', req.protocol + '://' + req.get('host') + req.originalUrl);
@@ -92,13 +98,13 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     console.log('Token params:', tokenParams);
     const accessToken = await client.getToken(tokenParams);
     console.log('Access Token received:', accessToken.token);
-    
+
     // Store the token
     global.yahooToken = accessToken.token;
 
     // Use the token to initialize YahooFantasy
     yf.setUserToken(accessToken.token.access_token);
-    
+
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
