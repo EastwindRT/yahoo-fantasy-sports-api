@@ -1,17 +1,10 @@
 const express = require('express');
 const YahooFantasy = require('yahoo-fantasy');
 const dotenv = require('dotenv');
-
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 10000;
-
-// Error logging middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).send('Something broke!');
-});
 
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
 console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
@@ -20,38 +13,75 @@ console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI);
 const yf = new YahooFantasy(
   process.env.YAHOO_APPLICATION_KEY,
   process.env.YAHOO_APPLICATION_SECRET,
-  null, // Token (we'll get this after authentication)
+  null,
   process.env.YAHOO_REDIRECT_URI
 );
+
+console.log('YahooFantasy object:', yf); // Debugging
+console.log('YahooFantasy auth method:', yf.auth); // Debugging
 
 app.get('/', (req, res) => {
   res.send('Yahoo Fantasy API app is running!');
 });
 
 app.get('/auth/yahoo', (req, res) => {
-  const authorizationUrl = yf.auth().url();
-  console.log('Authorization URL:', authorizationUrl); // Add this line for debugging
-  res.redirect(authorizationUrl);
+  try {
+    const authObject = yf.auth();
+    console.log('Auth object:', authObject); // Debugging
+    if (authObject && typeof authObject.url === 'function') {
+      const authorizationUrl = authObject.url();
+      console.log('Authorization URL:', authorizationUrl); // Debugging
+      res.redirect(authorizationUrl);
+    } else {
+      throw new Error('Invalid auth object');
+    }
+  } catch (error) {
+    console.error('Error in /auth/yahoo route:', error);
+    res.status(500).send('Internal Server Error: ' + error.message);
+  }
 });
 
-app.get('/auth/yahoo/callback', (req, res) => {
-  yf.auth().token(req.query.code, (err, token) => {
-    if (err) {
-      console.error('Authentication error:', err);
-      res.status(500).json({ error: 'Authentication failed', details: err.message });
-    } else {
-      // Store the token securely - in a real app, you'd use a database or secure session
-      global.yahooToken = token;
-      res.redirect('/dashboard');
-    }
-  });
+app.get('/auth/yahoo/callback', async (req, res) => {
+  try {
+    const token = await new Promise((resolve, reject) => {
+      yf.auth().token(req.query.code, (err, token) => {
+        if (err) reject(err);
+        else resolve(token);
+      });
+    });
+    global.yahooToken = token;
+    res.redirect('/dashboard');
+  } catch (error) {
+    console.error('Authentication error:', error);
+    res.status(500).json({ error: 'Authentication failed', details: error.message });
+  }
 });
 
 app.get('/dashboard', (req, res) => {
   if (!global.yahooToken) {
     res.redirect('/auth/yahoo');
   } else {
-    res.send('Authenticated! You can now make API calls.');
+    res.send('Authenticated! You can now make API calls. Try <a href="/test-api">Test API</a> or <a href="/myLeagues">My Leagues</a>');
+  }
+});
+
+// New route to test API connectivity
+app.get('/test-api', async (req, res) => {
+  if (!global.yahooToken) {
+    res.redirect('/auth/yahoo');
+  } else {
+    try {
+      const data = await new Promise((resolve, reject) => {
+        yf.user.games((err, data) => {
+          if (err) reject(err);
+          else resolve(data);
+        });
+      });
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching user games:', error);
+      res.status(500).json({ error: 'Failed to fetch user games', details: error.message });
+    }
   }
 });
 
@@ -70,7 +100,6 @@ app.get('/myLeagues', (req, res) => {
     res.redirect('/auth/yahoo');
     return;
   }
-
   yf.user.game_leagues('nba', (err, data) => {
     if (err) {
       console.error('Error fetching leagues:', err);
@@ -86,7 +115,6 @@ app.get('/team/:team_key/roster', (req, res) => {
     res.redirect('/auth/yahoo');
     return;
   }
-
   yf.team.roster(req.params.team_key, (err, data) => {
     if (err) {
       console.error('Error fetching team roster:', err);
@@ -102,8 +130,15 @@ app.get('/debug', (req, res) => {
   res.json({
     YAHOO_APPLICATION_KEY: process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set',
     YAHOO_APPLICATION_SECRET: process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set',
-    YAHOO_REDIRECT_URI: process.env.YAHOO_REDIRECT_URI
+    YAHOO_REDIRECT_URI: process.env.YAHOO_REDIRECT_URI,
+    PORT: process.env.PORT || 10000
   });
+});
+
+// Custom error handler
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send('Something went wrong: ' + err.message);
 });
 
 app.listen(port, () => {
