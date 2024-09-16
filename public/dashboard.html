@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - Yahoo Fantasy Sports API</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Yahoo Fantasy Sports Dashboard</h1>
+    <div id="user-info"></div>
+    <h2>My Leagues</h2>
+    <div id="leagues-table"></div>
+    <h2>League Details</h2>
+    <select id="league-select">
+        <option value="">Select a league</option>
+    </select>
+    <div id="league-details"></div>
+    <div id="standings-table"></div>
+
+    <script>
+        // Fetch and display user's leagues
+        fetch('/my-leagues')
+            .then(response => response.json())
+            .then(data => {
+                // Display user info
+                const userInfo = document.getElementById('user-info');
+                userInfo.innerHTML = `<p><strong>User GUID:</strong> ${data.user.guid}</p>
+                                      <p><strong>Game:</strong> ${data.game.name} ${data.game.season}</p>
+                                      <p><strong>Game Over:</strong> ${data.game.is_game_over ? 'Yes' : 'No'}</p>
+                                      <p><strong>Offseason:</strong> ${data.game.is_offseason ? 'Yes' : 'No'}</p>`;
+
+                // Create leagues table
+                const leaguesTable = document.getElementById('leagues-table');
+                let tableHTML = '<table><tr><th>Name</th><th>Teams</th><th>Draft Status</th><th>Scoring Type</th><th>Type</th><th>Current Week</th></tr>';
+                data.leagues.forEach(league => {
+                    tableHTML += `<tr>
+                        <td>${league.name}</td>
+                        <td>${league.num_teams}</td>
+                        <td>${league.draft_status}</td>
+                        <td>${league.scoring_type}</td>
+                        <td>${league.league_type}</td>
+                        <td>${league.current_week}</td>
+                    </tr>`;
+                });
+                tableHTML += '</table>';
+                leaguesTable.innerHTML = tableHTML;
+
+                // Populate league select dropdown
+                const leagueSelect = document.getElementById('league-select');
+                data.leagues.forEach(league => {
+                    const option = document.createElement('option');
+                    option.value = league.league_key;
+                    option.textContent = league.name;
+                    leagueSelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching leagues:', error);
+                document.getElementById('leagues-table').innerHTML = '<p class="error">Error fetching leagues. Please try again later.</p>';
+            });
+
+        // Fetch and display league details when a league is selected
+        document.getElementById('league-select').addEventListener('change', (event) => {
+            const leagueKey = event.target.value;
+            if (leagueKey) {
+                fetch(`/league/${leagueKey}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        // Display league details
+                        const leagueDetails = document.getElementById('league-details');
+                        leagueDetails.innerHTML = `
+                            <h3>${data.league.name}</h3>
+                            <p><strong>League ID:</strong> ${data.league.league_id}</p>
+                            <p><strong>Season:</strong> ${data.league.season}</p>
+                            <p><strong>Start Date:</strong> ${data.league.start_date}</p>
+                            <p><strong>End Date:</strong> ${data.league.end_date}</p>
+                            <p><strong>Weekly Deadline:</strong> ${data.league.weekly_deadline}</p>
+                        `;
+
+                        // Create standings table
+                        const standingsTable = document.getElementById('standings-table');
+                        let tableHTML = '<table><tr><th>Rank</th><th>Team Name</th><th>W</th><th>L</th><th>T</th><th>Winning %</th></tr>';
+                        data.standings.forEach(team => {
+                            tableHTML += `<tr>
+                                <td>${team.standings.rank}</td>
+                                <td>${team.name}</td>
+                                <td>${team.standings.outcome_totals.wins}</td>
+                                <td>${team.standings.outcome_totals.losses}</td>
+                                <td>${team.standings.outcome_totals.ties}</td>
+                                <td>${team.standings.outcome_totals.percentage}</td>
+                            </tr>`;
+                        });
+                        tableHTML += '</table>';
+                        standingsTable.innerHTML = tableHTML;
+                    })
+                    .catch(error => {
+                        console.error('Error fetching league details:', error);
+                        document.getElementById('league-details').innerHTML = '<p class="error">Error fetching league details. Please try again later.</p>';
+                        document.getElementById('standings-table').innerHTML = '';
+                    });
+            } else {
+                document.getElementById('league-details').innerHTML = '';
+                document.getElementById('standings-table').innerHTML = '';
+            }
+        });
+    </script>
+</body>
+</html>

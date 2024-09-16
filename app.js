@@ -2,10 +2,14 @@ const express = require('express');
 const YahooFantasy = require('yahoo-fantasy');
 const { AuthorizationCode } = require('simple-oauth2');
 const dotenv = require('dotenv');
+const path = require('path');
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// Serve static files from the 'public' directory
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Logging environment variables (be careful not to log sensitive information in production)
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
@@ -19,11 +23,6 @@ const yf = new YahooFantasy(
   null,
   process.env.YAHOO_REDIRECT_URI
 );
-
-// Log YahooFantasy object details without circular references
-console.log('YahooFantasy object properties:', Object.keys(yf));
-console.log('YahooFantasy auth method:', yf.auth ? 'Exists' : 'Does not exist');
-console.log('YahooFantasy auth type:', typeof yf.auth);
 
 // Initialize simple-oauth2 client
 const client = new AuthorizationCode({
@@ -42,17 +41,7 @@ const redirectUri = process.env.YAHOO_REDIRECT_URI;
 
 // Routes
 app.get('/', (req, res) => {
-  res.json({ message: 'Yahoo Fantasy API app is running!', auth_url: '/auth/yahoo' });
-});
-
-app.get('/check-yf', (req, res) => {
-  res.json({
-    yfProperties: Object.keys(yf),
-    authExists: !!yf.auth,
-    authType: typeof yf.auth,
-    authIsFunction: typeof yf.auth === 'function',
-    authProperties: yf.auth ? Object.keys(yf.auth) : []
-  });
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/auth/yahoo', (req, res) => {
@@ -62,7 +51,7 @@ app.get('/auth/yahoo', (req, res) => {
       scope: 'openid fspt-r',
     });
     console.log('Generated authorization URI:', authorizationUri);
-    res.json({ auth_url: authorizationUri });
+    res.redirect(authorizationUri);
   } catch (error) {
     console.error('Error generating authorization URL:', error);
     res.status(500).json({ 
@@ -76,7 +65,6 @@ app.get('/auth/yahoo', (req, res) => {
 app.get('/auth/yahoo/callback', async (req, res) => {
   console.log('Entering /auth/yahoo/callback route');
   console.log('Full request query:', req.query);
-  console.log('Request headers:', req.headers);
 
   if (req.query.error) {
     console.error('OAuth error:', req.query.error);
@@ -86,7 +74,6 @@ app.get('/auth/yahoo/callback', async (req, res) => {
 
   if (!req.query.code) {
     console.error('No code provided in callback');
-    console.log('Full URL:', req.protocol + '://' + req.get('host') + req.originalUrl);
     return res.status(400).json({ error: 'No code provided in callback', query: req.query });
   }
 
@@ -105,7 +92,7 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     // Use the token to initialize YahooFantasy
     yf.setUserToken(accessToken.token.access_token);
 
-    res.json({ message: 'Authentication successful', redirect: '/dashboard' });
+    res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
     res.status(500).json({ 
@@ -119,34 +106,9 @@ app.get('/auth/yahoo/callback', async (req, res) => {
 
 app.get('/dashboard', (req, res) => {
   if (!global.yahooToken) {
-    res.json({ error: 'Not authenticated', redirect: '/auth/yahoo' });
+    res.redirect('/auth/yahoo');
   } else {
-    res.json({ 
-      message: 'Authenticated! You can now make API calls.',
-      endpoints: {
-        test_api: '/test-api',
-        my_leagues: '/my-leagues'
-      }
-    });
-  }
-});
-
-app.get('/test-api', async (req, res) => {
-  if (!global.yahooToken) {
-    res.json({ error: 'Not authenticated', redirect: '/auth/yahoo' });
-  } else {
-    try {
-      const data = await new Promise((resolve, reject) => {
-        yf.user.games((err, data) => {
-          if (err) reject(err);
-          else resolve(data);
-        });
-      });
-      res.json(data);
-    } catch (error) {
-      console.error('Error fetching user games:', error);
-      res.status(500).json({ error: 'Failed to fetch user games', details: error.message });
-    }
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
   }
 });
 
