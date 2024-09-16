@@ -223,6 +223,14 @@ app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
 
+app.get('/check-auth', (req, res) => {
+  if (global.yahooToken) {
+    res.json({ authenticated: true });
+  } else {
+    res.json({ authenticated: false });
+  }
+});
+
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
