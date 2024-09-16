@@ -5,7 +5,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 10000;
+const port = process.env.PORT || 3000;
 
 // Logging environment variables (be careful not to log sensitive information in production)
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
@@ -42,7 +42,7 @@ const redirectUri = process.env.YAHOO_REDIRECT_URI;
 
 // Routes
 app.get('/', (req, res) => {
-  res.send('Yahoo Fantasy API app is running! <a href="/auth/yahoo">Authenticate with Yahoo</a>');
+  res.json({ message: 'Yahoo Fantasy API app is running!', auth_url: '/auth/yahoo' });
 });
 
 app.get('/check-yf', (req, res) => {
@@ -59,10 +59,10 @@ app.get('/auth/yahoo', (req, res) => {
   try {
     const authorizationUri = client.authorizeURL({
       redirect_uri: redirectUri,
-      scope: 'openid fspt-r', // Corrected scope for Yahoo Fantasy Sports API
+      scope: 'openid fspt-r',
     });
     console.log('Generated authorization URI:', authorizationUri);
-    res.redirect(authorizationUri);
+    res.json({ auth_url: authorizationUri });
   } catch (error) {
     console.error('Error generating authorization URL:', error);
     res.status(500).json({ 
@@ -81,13 +81,13 @@ app.get('/auth/yahoo/callback', async (req, res) => {
   if (req.query.error) {
     console.error('OAuth error:', req.query.error);
     console.error('Error description:', req.query.error_description);
-    return res.status(400).send(`OAuth error: ${req.query.error}. Description: ${req.query.error_description}`);
+    return res.status(400).json({ error: req.query.error, description: req.query.error_description });
   }
 
   if (!req.query.code) {
     console.error('No code provided in callback');
     console.log('Full URL:', req.protocol + '://' + req.get('host') + req.originalUrl);
-    return res.status(400).send('No code provided in callback. Full query: ' + JSON.stringify(req.query));
+    return res.status(400).json({ error: 'No code provided in callback', query: req.query });
   }
 
   try {
@@ -105,7 +105,7 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     // Use the token to initialize YahooFantasy
     yf.setUserToken(accessToken.token.access_token);
 
-    res.redirect('/dashboard');
+    res.json({ message: 'Authentication successful', redirect: '/dashboard' });
   } catch (error) {
     console.error('Authentication error:', error);
     res.status(500).json({ 
@@ -119,15 +119,21 @@ app.get('/auth/yahoo/callback', async (req, res) => {
 
 app.get('/dashboard', (req, res) => {
   if (!global.yahooToken) {
-    res.redirect('/auth/yahoo');
+    res.json({ error: 'Not authenticated', redirect: '/auth/yahoo' });
   } else {
-    res.send('Authenticated! You can now make API calls. Try <a href="/test-api">Test API</a> or <a href="/myLeagues">My Leagues</a>');
+    res.json({ 
+      message: 'Authenticated! You can now make API calls.',
+      endpoints: {
+        test_api: '/test-api',
+        my_leagues: '/my-leagues'
+      }
+    });
   }
 });
 
 app.get('/test-api', async (req, res) => {
   if (!global.yahooToken) {
-    res.redirect('/auth/yahoo');
+    res.json({ error: 'Not authenticated', redirect: '/auth/yahoo' });
   } else {
     try {
       const data = await new Promise((resolve, reject) => {
@@ -144,34 +150,95 @@ app.get('/test-api', async (req, res) => {
   }
 });
 
-app.get('/myLeagues', (req, res) => {
+app.get('/my-leagues', async (req, res) => {
   if (!global.yahooToken) {
-    res.redirect('/auth/yahoo');
-    return;
+    return res.status(401).json({ error: 'Not authenticated' });
   }
-  yf.user.game_leagues('nba', (err, data) => {
-    if (err) {
-      console.error('Error fetching leagues:', err);
-      res.status(500).json({ error: 'Failed to fetch leagues', details: err.message });
-    } else {
-      res.json(data);
+
+  try {
+    const userData = await new Promise((resolve, reject) => {
+      yf.user.games(
+        (err, data) => err ? reject(err) : resolve(data)
+      );
+    });
+
+    const nbaGame = userData.games.find(game => game.code === 'nba');
+
+    if (!nbaGame) {
+      return res.status(404).json({ error: 'No NBA game found for this user.' });
     }
-  });
+
+    const leaguesData = await new Promise((resolve, reject) => {
+      yf.user.game_leagues(
+        nbaGame.game_key,
+        (err, data) => err ? reject(err) : resolve(data)
+      );
+    });
+
+    const leagues = leaguesData.games[0].leagues.map(league => ({
+      name: league.name,
+      league_id: league.league_id,
+      league_key: league.league_key,
+      num_teams: league.num_teams,
+      draft_status: league.draft_status,
+      start_date: league.start_date,
+      end_date: league.end_date,
+      url: league.url,
+      scoring_type: league.scoring_type,
+      league_type: league.league_type,
+      renew: league.renew,
+      short_invitation_url: league.short_invitation_url,
+      is_pro_league: league.is_pro_league,
+      current_week: league.current_week
+    }));
+
+    res.json({ 
+      leagues,
+      user: {
+        guid: userData.guid
+      },
+      game: {
+        name: nbaGame.name,
+        season: nbaGame.season,
+        is_game_over: nbaGame.is_game_over,
+        is_offseason: nbaGame.is_offseason
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching league data:', error);
+    res.status(500).json({ error: 'Failed to fetch league data', details: error.message });
+  }
 });
 
-app.get('/team/:team_key/roster', (req, res) => {
+app.get('/league/:league_key', async (req, res) => {
   if (!global.yahooToken) {
-    res.redirect('/auth/yahoo');
-    return;
+    return res.status(401).json({ error: 'Not authenticated' });
   }
-  yf.team.roster(req.params.team_key, (err, data) => {
-    if (err) {
-      console.error('Error fetching team roster:', err);
-      res.status(500).json({ error: 'Failed to fetch team roster', details: err.message });
-    } else {
-      res.json(data);
-    }
-  });
+
+  try {
+    const leagueKey = req.params.league_key;
+    const leagueData = await new Promise((resolve, reject) => {
+      yf.league.meta(
+        leagueKey,
+        (err, data) => err ? reject(err) : resolve(data)
+      );
+    });
+
+    const standingsData = await new Promise((resolve, reject) => {
+      yf.league.standings(
+        leagueKey,
+        (err, data) => err ? reject(err) : resolve(data)
+      );
+    });
+
+    res.json({ 
+      league: leagueData,
+      standings: standingsData.standings
+    });
+  } catch (error) {
+    console.error('Error fetching league details:', error);
+    res.status(500).json({ error: 'Failed to fetch league details', details: error.message });
+  }
 });
 
 // Debug route to check environment variables
@@ -180,14 +247,14 @@ app.get('/debug', (req, res) => {
     YAHOO_APPLICATION_KEY: process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set',
     YAHOO_APPLICATION_SECRET: process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set',
     YAHOO_REDIRECT_URI: process.env.YAHOO_REDIRECT_URI,
-    PORT: process.env.PORT || 10000
+    PORT: process.env.PORT || 3000
   });
 });
 
 // Custom error handler
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  res.status(500).send('Something went wrong: ' + err.message);
+  res.status(500).json({ error: 'Something went wrong', message: err.message });
 });
 
 app.listen(port, () => {
