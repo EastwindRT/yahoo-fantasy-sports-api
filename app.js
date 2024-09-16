@@ -20,8 +20,8 @@ const yf = new YahooFantasy(
   process.env.YAHOO_REDIRECT_URI
 );
 
-// Log YahooFantasy object details
-console.log('YahooFantasy object:', JSON.stringify(yf, null, 2));
+// Log YahooFantasy object details without circular references
+console.log('YahooFantasy object properties:', Object.keys(yf));
 console.log('YahooFantasy auth method:', yf.auth ? 'Exists' : 'Does not exist');
 console.log('YahooFantasy auth type:', typeof yf.auth);
 
@@ -47,10 +47,11 @@ app.get('/', (req, res) => {
 
 app.get('/check-yf', (req, res) => {
   res.json({
+    yfProperties: Object.keys(yf),
     authExists: !!yf.auth,
     authType: typeof yf.auth,
     authIsFunction: typeof yf.auth === 'function',
-    authProperties: Object.keys(yf.auth || {})
+    authProperties: yf.auth ? Object.keys(yf.auth) : []
   });
 });
 
@@ -78,13 +79,13 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     };
     const accessToken = await client.getToken(tokenParams);
     console.log('Access Token:', accessToken.token);
-    
+
     // Store the token
     global.yahooToken = accessToken.token;
 
     // Use the token to initialize YahooFantasy
     yf.setUserToken(accessToken.token.access_token);
-    
+
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
