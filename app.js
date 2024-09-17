@@ -153,62 +153,38 @@ app.get('/check-auth', (req, res) => {
 
 app.get('/my-leagues', async (req, res) => {
   console.log('MY-LEAGUES ROUTE CALLED');
-  console.log('Yahoo Token exists:', !!global.yahooToken);
-
   if (!global.yahooToken) {
     console.log('No Yahoo token found');
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
-  console.log('Token expiration:', new Date(global.yahooToken.expires_at));
-
   try {
     if (global.yahooToken.expires_at && Date.now() >= global.yahooToken.expires_at) {
       console.log('Token expired, attempting to refresh');
       await refreshToken();
-      console.log('Token refreshed successfully');
     }
 
-    console.log('Attempting to fetch user games');
+    console.log('Fetching user games');
     const userData = await new Promise((resolve, reject) => {
-      yf.user.games(
-        (err, data) => {
-          if (err) {
-            console.error('Error fetching user games:', err);
-            reject(err);
-          } else {
-            console.log('User games fetched successfully');
-            resolve(data);
-          }
-        }
-      );
+      yf.user.games((err, data) => err ? reject(err) : resolve(data));
     });
 
-    console.log('User data:', JSON.stringify(userData, null, 2));
+    console.log('User games:', userData.games);
 
-    const nbaGame = userData.games.find(game => game.code === 'nba');
+    const nbaGame = userData.games
+      .filter(game => game.code === 'nba')
+      .sort((a, b) => parseInt(b.season) - parseInt(a.season))[0];
 
     if (!nbaGame) {
       console.log('No NBA game found for user');
       return res.status(404).json({ error: 'No NBA game found for this user.' });
     }
 
-    console.log('NBA game found:', JSON.stringify(nbaGame, null, 2));
+    console.log('Most recent NBA game:', nbaGame);
 
-    console.log('Attempting to fetch user leagues');
+    console.log('Fetching user leagues');
     const leaguesData = await new Promise((resolve, reject) => {
-      yf.user.game_leagues(
-        nbaGame.game_key,
-        (err, data) => {
-          if (err) {
-            console.error('Error fetching user leagues:', err);
-            reject(err);
-          } else {
-            console.log('User leagues fetched successfully');
-            resolve(data);
-          }
-        }
-      );
+      yf.user.game_leagues(nbaGame.game_key, (err, data) => err ? reject(err) : resolve(data));
     });
 
     console.log('Leagues data:', JSON.stringify(leaguesData, null, 2));
@@ -230,7 +206,6 @@ app.get('/my-leagues', async (req, res) => {
       current_week: league.current_week
     }));
 
-    console.log('Sending response');
     res.json({ 
       leagues,
       user: {
@@ -244,12 +219,8 @@ app.get('/my-leagues', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Detailed error in /my-leagues:', error);
-    res.status(500).json({ 
-      error: 'Failed to fetch league data', 
-      details: error.message,
-      stack: error.stack
-    });
+    console.error('Error in /my-leagues:', error);
+    res.status(500).json({ error: 'Failed to fetch league data', details: error.message });
   }
 });
 
@@ -269,35 +240,17 @@ app.get('/league/:league_key', async (req, res) => {
     const leagueKey = req.params.league_key;
     console.log('Fetching league data for:', leagueKey);
     const leagueData = await new Promise((resolve, reject) => {
-      yf.league.meta(
-        leagueKey,
-        (err, data) => {
-          if (err) {
-            console.error('Error fetching league meta:', err);
-            reject(err);
-          } else {
-            console.log('League meta fetched successfully');
-            resolve(data);
-          }
-        }
-      );
+      yf.league.meta(leagueKey, (err, data) => err ? reject(err) : resolve(data));
     });
 
     console.log('Fetching league standings');
     const standingsData = await new Promise((resolve, reject) => {
-      yf.league.standings(
-        leagueKey,
-        (err, data) => {
-          if (err) {
-            console.error('Error fetching league standings:', err);
-            reject(err);
-          } else {
-            console.log('League standings fetched successfully');
-            resolve(data);
-          }
-        }
-      );
+      yf.league.standings(leagueKey, (err, data) => err ? reject(err) : resolve(data));
     });
+
+    if (!standingsData || !standingsData.standings) {
+      throw new Error('No standings data available');
+    }
 
     console.log('Sending response');
     res.json({ 

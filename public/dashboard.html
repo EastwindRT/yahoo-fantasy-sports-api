@@ -133,7 +133,10 @@
                         })
                         .catch(error => {
                             console.error('Error fetching league details:', error);
-                            document.getElementById('league-details').innerHTML = `<p class="error">Error fetching league details: ${error.message}. Please try again later.</p>`;
+                            document.getElementById('league-details').innerHTML = `
+                                <p class="error">Error fetching league details: ${error.message}</p>
+                                <p>This might be due to the league being inactive or not having any current data.</p>
+                            `;
                             document.getElementById('standings-table').innerHTML = '';
                         });
                 } else {
