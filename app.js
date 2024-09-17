@@ -39,6 +39,23 @@ const client = new AuthorizationCode({
 
 const redirectUri = process.env.YAHOO_REDIRECT_URI;
 
+// Token refresh mechanism
+const refreshToken = async () => {
+  try {
+    console.log('Refreshing token');
+    const accessToken = await client.getToken({
+      refresh_token: global.yahooToken.refresh_token,
+      grant_type: 'refresh_token'
+    });
+    global.yahooToken = accessToken.token;
+    yf.setUserToken(accessToken.token.access_token);
+    console.log('Token refreshed successfully');
+  } catch (error) {
+    console.error('Error refreshing token:', error);
+    throw error;
+  }
+};
+
 // Routes
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
@@ -112,30 +129,70 @@ app.get('/dashboard', (req, res) => {
   }
 });
 
+app.get('/check-auth', (req, res) => {
+  if (global.yahooToken) {
+    res.json({ authenticated: true });
+  } else {
+    res.json({ authenticated: false });
+  }
+});
+
 app.get('/my-leagues', async (req, res) => {
+  console.log('Entering /my-leagues route');
   if (!global.yahooToken) {
+    console.log('No Yahoo token found');
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
   try {
+    if (global.yahooToken.expires_at && Date.now() >= global.yahooToken.expires_at) {
+      console.log('Token expired, refreshing');
+      await refreshToken();
+    }
+
+    console.log('Fetching user games');
     const userData = await new Promise((resolve, reject) => {
       yf.user.games(
-        (err, data) => err ? reject(err) : resolve(data)
+        (err, data) => {
+          if (err) {
+            console.error('Error fetching user games:', err);
+            reject(err);
+          } else {
+            console.log('User games fetched successfully');
+            resolve(data);
+          }
+        }
       );
     });
+
+    console.log('User data:', userData);
 
     const nbaGame = userData.games.find(game => game.code === 'nba');
 
     if (!nbaGame) {
+      console.log('No NBA game found for user');
       return res.status(404).json({ error: 'No NBA game found for this user.' });
     }
 
+    console.log('NBA game found:', nbaGame);
+
+    console.log('Fetching user leagues');
     const leaguesData = await new Promise((resolve, reject) => {
       yf.user.game_leagues(
         nbaGame.game_key,
-        (err, data) => err ? reject(err) : resolve(data)
+        (err, data) => {
+          if (err) {
+            console.error('Error fetching user leagues:', err);
+            reject(err);
+          } else {
+            console.log('User leagues fetched successfully');
+            resolve(data);
+          }
+        }
       );
     });
+
+    console.log('Leagues data:', leaguesData);
 
     const leagues = leaguesData.games[0].leagues.map(league => ({
       name: league.name,
@@ -154,6 +211,7 @@ app.get('/my-leagues', async (req, res) => {
       current_week: league.current_week
     }));
 
+    console.log('Sending response');
     res.json({ 
       leagues,
       user: {
@@ -167,32 +225,58 @@ app.get('/my-leagues', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error fetching league data:', error);
+    console.error('Error in /my-leagues:', error);
     res.status(500).json({ error: 'Failed to fetch league data', details: error.message });
   }
 });
 
 app.get('/league/:league_key', async (req, res) => {
+  console.log('Entering /league/:league_key route');
   if (!global.yahooToken) {
+    console.log('No Yahoo token found');
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
   try {
+    if (global.yahooToken.expires_at && Date.now() >= global.yahooToken.expires_at) {
+      console.log('Token expired, refreshing');
+      await refreshToken();
+    }
+
     const leagueKey = req.params.league_key;
+    console.log('Fetching league data for:', leagueKey);
     const leagueData = await new Promise((resolve, reject) => {
       yf.league.meta(
         leagueKey,
-        (err, data) => err ? reject(err) : resolve(data)
+        (err, data) => {
+          if (err) {
+            console.error('Error fetching league meta:', err);
+            reject(err);
+          } else {
+            console.log('League meta fetched successfully');
+            resolve(data);
+          }
+        }
       );
     });
 
+    console.log('Fetching league standings');
     const standingsData = await new Promise((resolve, reject) => {
       yf.league.standings(
         leagueKey,
-        (err, data) => err ? reject(err) : resolve(data)
+        (err, data) => {
+          if (err) {
+            console.error('Error fetching league standings:', err);
+            reject(err);
+          } else {
+            console.log('League standings fetched successfully');
+            resolve(data);
+          }
+        }
       );
     });
 
+    console.log('Sending response');
     res.json({ 
       league: leagueData,
       standings: standingsData.standings
@@ -201,6 +285,11 @@ app.get('/league/:league_key', async (req, res) => {
     console.error('Error fetching league details:', error);
     res.status(500).json({ error: 'Failed to fetch league details', details: error.message });
   }
+});
+
+// Test route
+app.get('/test', (req, res) => {
+  res.json({ message: 'Server is running' });
 });
 
 // Debug route to check environment variables
@@ -221,14 +310,6 @@ app.use((err, req, res, next) => {
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
-});
-
-app.get('/check-auth', (req, res) => {
-  if (global.yahooToken) {
-    res.json({ authenticated: true });
-  } else {
-    res.json({ authenticated: false });
-  }
 });
 
 process.on('unhandledRejection', (reason, promise) => {
