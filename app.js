@@ -4,6 +4,7 @@ const { AuthorizationCode } = require('simple-oauth2');
 const session = require('express-session');
 const dotenv = require('dotenv');
 const path = require('path');
+const crypto = require('crypto');
 
 dotenv.config();
 
@@ -64,9 +65,13 @@ app.get('/', (req, res) => {
 
 app.get('/auth/yahoo', (req, res) => {
   try {
+    const state = crypto.randomBytes(16).toString('hex');
+    req.session.oauthState = state;
+
     const authorizationUri = client.authorizeURL({
       redirect_uri: redirectUri,
       scope: 'openid fspt-r',
+      state: state
     });
     res.redirect(authorizationUri);
   } catch (error) {
@@ -87,30 +92,30 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     return res.status(400).json({ error: 'No code provided in callback' });
   }
 
+  if (req.query.state !== req.session.oauthState) {
+    return res.status(400).json({ error: 'Invalid state parameter' });
+  }
+
   try {
     const tokenParams = {
       code: req.query.code,
       redirect_uri: redirectUri
     };
     const accessToken = await client.getToken(tokenParams);
-    
-    // Store the token in the session
-    req.session.yahooToken = accessToken.token;
 
-    // Use the token to initialize YahooFantasy
+    req.session.yahooToken = accessToken.token;
     yf.setUserToken(accessToken.token.access_token);
 
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
-    
-    // Check if the error is due to an expired authorization code
+
     if (error.data && error.data.payload && error.data.payload.error === 'invalid_grant' &&
         error.data.payload.error_description === 'Authorization code expired') {
       console.log('Authorization code expired, redirecting to auth page');
-      return res.redirect('/auth/yahoo');  // Redirect back to the authorization page
+      return res.redirect('/auth/yahoo');
     }
-    
+
     res.status(500).json({ 
       error: 'Authentication failed', 
       details: error.message
@@ -237,6 +242,11 @@ app.get('/league/:league_key', isAuthenticated, async (req, res) => {
     console.error('Error fetching league details:', error);
     res.status(500).json({ error: 'Failed to fetch league details', details: error.message });
   }
+});
+
+// Implement a simple keep-alive route
+app.get('/keep-alive', (req, res) => {
+  res.status(200).send('OK');
 });
 
 // Test route
