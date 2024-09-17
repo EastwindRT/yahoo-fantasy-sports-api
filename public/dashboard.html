@@ -145,17 +145,26 @@
 
         // Check authentication status before loading dashboard
         fetch('/check-auth')
-            .then(response => response.json())
+            .then(response => {
+                console.log('Check-auth response status:', response.status);
+                return response.json();
+            })
             .then(data => {
+                console.log('Check-auth response data:', data);
                 if (!data.authenticated) {
+                    console.log('Not authenticated, redirecting to home');
                     window.location.href = '/';
                 } else {
+                    console.log('Authenticated, loading dashboard');
                     loadDashboard();
                 }
             })
             .catch(error => {
-                console.error('Error checking authentication:', error);
-                document.body.innerHTML = '<p class="error">Error checking authentication. Please try again later.</p>';
+                console.error('Detailed error checking authentication:', error);
+                document.body.innerHTML = `
+                    <p class="error">Error checking authentication: ${error.message}</p>
+                    <p>Please check the console for more details and try again later.</p>
+                `;
             });
     </script>
 </body>

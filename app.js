@@ -110,6 +110,7 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     yf.setUserToken(accessToken.token.access_token);
 
     console.log('Yahoo Token set:', !!global.yahooToken);
+    console.log('Token expiration:', new Date(global.yahooToken.expires_at));
 
     res.redirect('/dashboard');
   } catch (error) {
@@ -128,6 +129,25 @@ app.get('/dashboard', (req, res) => {
     res.redirect('/auth/yahoo');
   } else {
     res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  }
+});
+
+app.get('/check-auth', (req, res) => {
+  console.log('Check-auth route called');
+  console.log('Yahoo Token exists:', !!global.yahooToken);
+  if (global.yahooToken) {
+    console.log('Token expiration:', new Date(global.yahooToken.expires_at));
+    res.json({ 
+      authenticated: true, 
+      tokenExists: true,
+      tokenExpiration: global.yahooToken.expires_at
+    });
+  } else {
+    res.json({ 
+      authenticated: false, 
+      tokenExists: false,
+      reason: 'No Yahoo token found'
+    });
   }
 });
 
@@ -293,6 +313,19 @@ app.get('/league/:league_key', async (req, res) => {
 // Test route
 app.get('/test', (req, res) => {
   res.json({ message: 'Server is running' });
+});
+
+// Token test route
+app.get('/token-test', (req, res) => {
+  if (global.yahooToken) {
+    res.json({
+      tokenExists: true,
+      expiresAt: global.yahooToken.expires_at,
+      accessTokenLength: global.yahooToken.access_token.length
+    });
+  } else {
+    res.json({ tokenExists: false });
+  }
 });
 
 // Debug route to check environment variables
