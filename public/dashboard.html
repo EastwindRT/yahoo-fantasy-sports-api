@@ -35,9 +35,6 @@
     <div id="league-details"></div>
     <div id="standings-table"></div>
 
-    <h2>Team Roster</h2>
-    <div id="team-roster"></div>
-
     <script>
         function loadYears() {
             fetch('/available-years')
@@ -155,10 +152,6 @@
                     .then(data => {
                         displayLeagueDetails(data.league);
                         displayStandings(data.standings);
-                        if (data.standings && data.standings.length > 0) {
-                            const firstTeamKey = data.standings[0].team_key;
-                            displayTeamRoster(firstTeamKey);
-                        }
                     })
                     .catch(error => {
                         console.error('Error fetching league details:', error);
@@ -167,12 +160,10 @@
                             <p>This might be due to the league being inactive or not having any current data.</p>
                         `;
                         document.getElementById('standings-table').innerHTML = '';
-                        document.getElementById('team-roster').innerHTML = '';
                     });
             } else {
                 document.getElementById('league-details').innerHTML = '';
                 document.getElementById('standings-table').innerHTML = '';
-                document.getElementById('team-roster').innerHTML = '';
             }
         });
 
@@ -219,24 +210,6 @@
             } else {
                 standingsTable.innerHTML = '<p>No standings data available.</p>';
             }
-        }
-
-        function displayTeamRoster(teamKey) {
-            fetch(`/team/${teamKey}/roster`)
-                .then(response => response.json())
-                .then(data => {
-                    const rosterDiv = document.getElementById('team-roster');
-                    let rosterHTML = '<h3>Team Roster</h3><ul>';
-                    data.roster.forEach(player => {
-                        rosterHTML += `<li>${player.name.full} - ${player.display_position}</li>`;
-                    });
-                    rosterHTML += '</ul>';
-                    rosterDiv.innerHTML = rosterHTML;
-                })
-                .catch(error => {
-                    console.error('Error fetching team roster:', error);
-                    document.getElementById('team-roster').innerHTML = `<p class="error">Error fetching team roster: ${error.message}</p>`;
-                });
         }
 
         loadYears();
