@@ -4,166 +4,105 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard - Yahoo Fantasy Sports API</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .error { color: red; }
+    </style>
 </head>
-<body class="bg-gray-100">
-    <div class="container mx-auto px-4 py-8">
-        <header class="flex justify-between items-center mb-8">
-            <h1 class="text-3xl font-bold">Yahoo Fantasy Sports Dashboard</h1>
-            <a href="/logout" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">Logout</a>
-        </header>
-
-        <div id="user-info" class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4"></div>
-
-        <div class="mb-4">
-            <label for="year-select" class="block text-gray-700 text-sm font-bold mb-2">Select Year:</label>
-            <select id="year-select" class="shadow border rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
-                <option value="">Select a year</option>
-            </select>
-        </div>
-
-        <h2 class="text-2xl font-bold mb-4">My Leagues</h2>
-        <div id="leagues-table" class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4">
-            <p class="text-gray-700">Select a year to view leagues...</p>
-        </div>
-
-        <h2 class="text-2xl font-bold mb-4">League Details</h2>
-        <div class="mb-4">
-            <select id="league-select" class="shadow border rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
-                <option value="">Select a league</option>
-            </select>
-        </div>
-        <div id="league-details" class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4"></div>
-        <div id="standings-table" class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4"></div>
-    </div>
+<body>
+    <h1>Yahoo Fantasy Sports Dashboard</h1>
+    <div id="user-info"></div>
+    <h2>My Leagues</h2>
+    <div id="leagues-table"></div>
+    <h2>League Details</h2>
+    <select id="league-select">
+        <option value="">Select a league</option>
+    </select>
+    <div id="league-details"></div>
+    <div id="standings-table"></div>
 
     <script>
-        function loadYears() {
-            fetch('/available-years')
-                .then(response => response.json())
-                .then(data => {
-                    const yearSelect = document.getElementById('year-select');
-                    data.years.forEach(year => {
-                        const option = document.createElement('option');
-                        option.value = year;
-                        option.textContent = year;
-                        yearSelect.appendChild(option);
-                    });
-                    yearSelect.addEventListener('change', loadDashboard);
-                })
-                .catch(error => {
-                    console.error('Error fetching available years:', error);
-                    document.getElementById('year-select').innerHTML = `<option value="">Error loading years</option>`;
+        // Fetch and display user's leagues
+        fetch('/my-leagues')
+            .then(response => response.json())
+            .then(data => {
+                // Display user info
+                const userInfo = document.getElementById('user-info');
+                userInfo.innerHTML = `<p><strong>User GUID:</strong> ${data.user.guid}</p>
+                                      <p><strong>Game:</strong> ${data.game.name} ${data.game.season}</p>
+                                      <p><strong>Game Over:</strong> ${data.game.is_game_over ? 'Yes' : 'No'}</p>
+                                      <p><strong>Offseason:</strong> ${data.game.is_offseason ? 'Yes' : 'No'}</p>`;
+
+                // Create leagues table
+                const leaguesTable = document.getElementById('leagues-table');
+                let tableHTML = '<table><tr><th>Name</th><th>Teams</th><th>Draft Status</th><th>Scoring Type</th><th>Type</th><th>Current Week</th></tr>';
+                data.leagues.forEach(league => {
+                    tableHTML += `<tr>
+                        <td>${league.name}</td>
+                        <td>${league.num_teams}</td>
+                        <td>${league.draft_status}</td>
+                        <td>${league.scoring_type}</td>
+                        <td>${league.league_type}</td>
+                        <td>${league.current_week}</td>
+                    </tr>`;
                 });
-        }
-
-        function loadDashboard() {
-            const year = document.getElementById('year-select').value;
-            if (!year) return;
-
-            fetch(`/my-leagues/${year}`)
-                .then(response => {
-                    if (!response.ok) {
-                        return response.text().then(text => {
-                            throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
-                        });
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    console.log('Received data:', data);
-                    displayUserInfo(data.user, data.game);
-                    displayLeagues(data.leagues);
-                    populateLeagueSelect(data.leagues);
-                })
-                .catch(error => {
-                    console.error('Detailed error fetching leagues:', error);
-                    document.getElementById('leagues-table').innerHTML = `
-                        <p class="text-red-500">Error fetching leagues: ${error.message}</p>
-                        <p>Please check the console for more details and try again later.</p>
-                    `;
-                });
-        }
-
-        function displayUserInfo(user, game) {
-            const userInfo = document.getElementById('user-info');
-            userInfo.innerHTML = `
-                <p><strong>User GUID:</strong> ${user.guid}</p>
-                <p><strong>Game:</strong> ${game.name} ${game.season}</p>
-                <p><strong>Game Over:</strong> ${game.is_game_over ? 'Yes' : 'No'}</p>
-                <p><strong>Offseason:</strong> ${game.is_offseason ? 'Yes' : 'No'}</p>
-            `;
-        }
-
-        function displayLeagues(leagues) {
-            const leaguesTable = document.getElementById('leagues-table');
-            if (leagues && leagues.length > 0) {
-                let tableHTML = `
-                    <table class="min-w-full">
-                        <thead>
-                            <tr>
-                                <th class="px-4 py-2 text-left">Name</th>
-                                <th class="px-4 py-2 text-left">Teams</th>
-                                <th class="px-4 py-2 text-left">Draft Status</th>
-                                <th class="px-4 py-2 text-left">Scoring Type</th>
-                                <th class="px-4 py-2 text-left">Type</th>
-                                <th class="px-4 py-2 text-left">Current Week</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                `;
-                leagues.forEach(league => {
-                    tableHTML += `
-                        <tr>
-                            <td class="border px-4 py-2">${league.name}</td>
-                            <td class="border px-4 py-2">${league.num_teams}</td>
-                            <td class="border px-4 py-2">${league.draft_status}</td>
-                            <td class="border px-4 py-2">${league.scoring_type}</td>
-                            <td class="border px-4 py-2">${league.league_type}</td>
-                            <td class="border px-4 py-2">${league.current_week}</td>
-                        </tr>
-                    `;
-                });
-                tableHTML += '</tbody></table>';
+                tableHTML += '</table>';
                 leaguesTable.innerHTML = tableHTML;
-            } else {
-                leaguesTable.innerHTML = '<p class="text-gray-700">No leagues found for the selected year.</p>';
-            }
-        }
 
-        function populateLeagueSelect(leagues) {
-            const leagueSelect = document.getElementById('league-select');
-            leagueSelect.innerHTML = '<option value="">Select a league</option>';
-            leagues.forEach(league => {
-                const option = document.createElement('option');
-                option.value = league.league_key;
-                option.textContent = league.name;
-                leagueSelect.appendChild(option);
+                // Populate league select dropdown
+                const leagueSelect = document.getElementById('league-select');
+                data.leagues.forEach(league => {
+                    const option = document.createElement('option');
+                    option.value = league.league_key;
+                    option.textContent = league.name;
+                    leagueSelect.appendChild(option);
+                });
+            })
+            .catch(error => {
+                console.error('Error fetching leagues:', error);
+                document.getElementById('leagues-table').innerHTML = '<p class="error">Error fetching leagues. Please try again later.</p>';
             });
-        }
 
+        // Fetch and display league details when a league is selected
         document.getElementById('league-select').addEventListener('change', (event) => {
             const leagueKey = event.target.value;
             if (leagueKey) {
                 fetch(`/league/${leagueKey}`)
-                    .then(response => {
-                        if (!response.ok) {
-                            return response.text().then(text => {
-                                throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
-                            });
-                        }
-                        return response.json();
-                    })
+                    .then(response => response.json())
                     .then(data => {
-                        displayLeagueDetails(data.league);
-                        displayStandings(data.standings);
+                        // Display league details
+                        const leagueDetails = document.getElementById('league-details');
+                        leagueDetails.innerHTML = `
+                            <h3>${data.league.name}</h3>
+                            <p><strong>League ID:</strong> ${data.league.league_id}</p>
+                            <p><strong>Season:</strong> ${data.league.season}</p>
+                            <p><strong>Start Date:</strong> ${data.league.start_date}</p>
+                            <p><strong>End Date:</strong> ${data.league.end_date}</p>
+                            <p><strong>Weekly Deadline:</strong> ${data.league.weekly_deadline}</p>
+                        `;
+
+                        // Create standings table
+                        const standingsTable = document.getElementById('standings-table');
+                        let tableHTML = '<table><tr><th>Rank</th><th>Team Name</th><th>W</th><th>L</th><th>T</th><th>Winning %</th></tr>';
+                        data.standings.forEach(team => {
+                            tableHTML += `<tr>
+                                <td>${team.standings.rank}</td>
+                                <td>${team.name}</td>
+                                <td>${team.standings.outcome_totals.wins}</td>
+                                <td>${team.standings.outcome_totals.losses}</td>
+                                <td>${team.standings.outcome_totals.ties}</td>
+                                <td>${team.standings.outcome_totals.percentage}</td>
+                            </tr>`;
+                        });
+                        tableHTML += '</table>';
+                        standingsTable.innerHTML = tableHTML;
                     })
                     .catch(error => {
                         console.error('Error fetching league details:', error);
-                        document.getElementById('league-details').innerHTML = `
-                            <p class="text-red-500">Error fetching league details: ${error.message}</p>
-                            <p>This might be due to the league being inactive or not having any current data.</p>
-                        `;
+                        document.getElementById('league-details').innerHTML = '<p class="error">Error fetching league details. Please try again later.</p>';
                         document.getElementById('standings-table').innerHTML = '';
                     });
             } else {
@@ -171,67 +110,6 @@
                 document.getElementById('standings-table').innerHTML = '';
             }
         });
-
-        function displayLeagueDetails(league) {
-            const leagueDetails = document.getElementById('league-details');
-            leagueDetails.innerHTML = `
-                <h3 class="text-xl font-bold mb-2">${league.name}</h3>
-                <p><strong>League ID:</strong> ${league.league_id}</p>
-                <p><strong>Season:</strong> ${league.season}</p>
-                <p><strong>Start Date:</strong> ${league.start_date}</p>
-                <p><strong>End Date:</strong> ${league.end_date}</p>
-                <p><strong>Weekly Deadline:</strong> ${league.weekly_deadline}</p>
-            `;
-        }
-
-        function displayStandings(standings) {
-            const standingsTable = document.getElementById('standings-table');
-            if (standings && standings.length > 0) {
-                let tableHTML = `
-                    <table class="min-w-full">
-                        <thead>
-                            <tr>
-                                <th class="px-4 py-2 text-left">Rank</th>
-                                <th class="px-4 py-2 text-left">Team Name</th>
-                                <th class="px-4 py-2 text-left">W</th>
-                                <th class="px-4 py-2 text-left">L</th>
-                                <th class="px-4 py-2 text-left">T</th>
-                                <th class="px-4 py-2 text-left">Winning %</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                `;
-                standings.forEach(team => {
-                    tableHTML += `
-                        <tr>
-                            <td class="border px-4 py-2">${team.rank}</td>
-                            <td class="border px-4 py-2">${team.name}</td>
-                            <td class="border px-4 py-2">${team.outcome_totals.wins}</td>
-                            <td class="border px-4 py-2">${team.outcome_totals.losses}</td>
-                            <td class="border px-4 py-2">${team.outcome_totals.ties}</td>
-                            <td class="border px-4 py-2">${team.outcome_totals.percentage}</td>
-                        </tr>
-                    `;
-                });
-                tableHTML += '</tbody></table>';
-                standingsTable.innerHTML = tableHTML;
-            } else {
-                standingsTable.innerHTML = '<p class="text-gray-700">No standings data available.</p>';
-            }
-        }
-
-        loadYears();
-
-        // Keep-alive mechanism
-        setInterval(() => {
-            fetch('/keep-alive')
-                .then(response => {
-                    if (!response.ok) {
-                        console.error('Keep-alive request failed');
-                    }
-                })
-                .catch(error => console.error('Error in keep-alive request:', error));
-        }, 45000);  // Send a request every 45 seconds
     </script>
 </body>
 </html>

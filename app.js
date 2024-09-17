@@ -1,26 +1,20 @@
 const express = require('express');
 const YahooFantasy = require('yahoo-fantasy');
 const { AuthorizationCode } = require('simple-oauth2');
-const session = require('express-session');
 const dotenv = require('dotenv');
 const path = require('path');
-const crypto = require('crypto');
-
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Session configuration
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'your_session_secret',
-  resave: false,
-  saveUninitialized: true,
-  cookie: { secure: process.env.NODE_ENV === 'production' }
-}));
-
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Logging environment variables (be careful not to log sensitive information in production)
+console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
+console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
+console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI);
 
 // Initialize YahooFantasy
 const yf = new YahooFantasy(
@@ -45,55 +39,42 @@ const client = new AuthorizationCode({
 
 const redirectUri = process.env.YAHOO_REDIRECT_URI;
 
-// Middleware to check if the user is authenticated
-const isAuthenticated = (req, res, next) => {
-  if (req.session.yahooToken) {
-    next();
-  } else {
-    res.redirect('/auth/yahoo');
-  }
-};
-
 // Routes
 app.get('/', (req, res) => {
-  if (req.session.yahooToken) {
-    res.redirect('/dashboard');
-  } else {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/auth/yahoo', (req, res) => {
   try {
-    const state = crypto.randomBytes(16).toString('hex');
-    req.session.oauthState = state;
-
     const authorizationUri = client.authorizeURL({
       redirect_uri: redirectUri,
       scope: 'openid fspt-r',
-      state: state
     });
+    console.log('Generated authorization URI:', authorizationUri);
     res.redirect(authorizationUri);
   } catch (error) {
     console.error('Error generating authorization URL:', error);
     res.status(500).json({ 
       error: 'Failed to generate authorization URL', 
-      details: error.message
+      details: error.message,
+      stack: error.stack
     });
   }
 });
 
 app.get('/auth/yahoo/callback', async (req, res) => {
+  console.log('Entering /auth/yahoo/callback route');
+  console.log('Full request query:', req.query);
+
   if (req.query.error) {
+    console.error('OAuth error:', req.query.error);
+    console.error('Error description:', req.query.error_description);
     return res.status(400).json({ error: req.query.error, description: req.query.error_description });
   }
 
   if (!req.query.code) {
-    return res.status(400).json({ error: 'No code provided in callback' });
-  }
-
-  if (req.query.state !== req.session.oauthState) {
-    return res.status(400).json({ error: 'Invalid state parameter' });
+    console.error('No code provided in callback');
+    return res.status(400).json({ error: 'No code provided in callback', query: req.query });
   }
 
   try {
@@ -101,80 +82,59 @@ app.get('/auth/yahoo/callback', async (req, res) => {
       code: req.query.code,
       redirect_uri: redirectUri
     };
+    console.log('Token params:', tokenParams);
     const accessToken = await client.getToken(tokenParams);
+    console.log('Access Token received:', accessToken.token);
 
-    req.session.yahooToken = accessToken.token;
+    // Store the token
+    global.yahooToken = accessToken.token;
+
+    // Use the token to initialize YahooFantasy
     yf.setUserToken(accessToken.token.access_token);
 
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
-
-    if (error.data && error.data.payload && error.data.payload.error === 'invalid_grant' &&
-        error.data.payload.error_description === 'Authorization code expired') {
-      console.log('Authorization code expired, redirecting to auth page');
-      return res.redirect('/auth/yahoo');
-    }
-
     res.status(500).json({ 
       error: 'Authentication failed', 
-      details: error.message
+      details: error.message,
+      stack: error.stack,
+      query: req.query
     });
   }
 });
 
-app.get('/dashboard', isAuthenticated, (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-});
-
-app.get('/logout', (req, res) => {
-  req.session.destroy(err => {
-    if (err) {
-      console.error('Error destroying session:', err);
-    }
-    res.redirect('/');
-  });
-});
-
-app.get('/available-years', isAuthenticated, async (req, res) => {
-  try {
-    const userData = await new Promise((resolve, reject) => {
-      yf.user.games((err, data) => err ? reject(err) : resolve(data));
-    });
-
-    const nbaYears = userData.games
-      .filter(game => game.code === 'nba')
-      .map(game => game.season)
-      .sort((a, b) => b - a);  // Sort in descending order
-
-    res.json({ years: nbaYears });
-  } catch (error) {
-    console.error('Error fetching available years:', error);
-    res.status(500).json({ error: 'Failed to fetch available years', details: error.message });
+app.get('/dashboard', (req, res) => {
+  if (!global.yahooToken) {
+    res.redirect('/auth/yahoo');
+  } else {
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
   }
 });
 
-app.get('/my-leagues/:year', isAuthenticated, async (req, res) => {
+app.get('/my-leagues', async (req, res) => {
+  if (!global.yahooToken) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
   try {
-    if (req.session.yahooToken.expires_at && Date.now() >= req.session.yahooToken.expires_at) {
-      // Token refresh logic would go here
-      console.log('Token expired, refresh logic needed');
-    }
-
-    yf.setUserToken(req.session.yahooToken.access_token);
-
     const userData = await new Promise((resolve, reject) => {
-      yf.user.games((err, data) => err ? reject(err) : resolve(data));
+      yf.user.games(
+        (err, data) => err ? reject(err) : resolve(data)
+      );
     });
 
-    const nbaGame = userData.games.find(game => game.code === 'nba' && game.season === req.params.year);
+    const nbaGame = userData.games.find(game => game.code === 'nba');
 
     if (!nbaGame) {
-      return res.status(404).json({ error: `No NBA game found for year ${req.params.year}` });
+      return res.status(404).json({ error: 'No NBA game found for this user.' });
     }
 
     const leaguesData = await new Promise((resolve, reject) => {
-      yf.user.game_leagues(nbaGame.game_key, (err, data) => err ? reject(err) : resolve(data));
+      yf.user.game_leagues(
+        nbaGame.game_key,
+        (err, data) => err ? reject(err) : resolve(data)
+      );
     });
 
     const leagues = leaguesData.games[0].leagues.map(league => ({
@@ -207,32 +167,31 @@ app.get('/my-leagues/:year', isAuthenticated, async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error in /my-leagues:', error);
+    console.error('Error fetching league data:', error);
     res.status(500).json({ error: 'Failed to fetch league data', details: error.message });
   }
 });
 
-app.get('/league/:league_key', isAuthenticated, async (req, res) => {
+app.get('/league/:league_key', async (req, res) => {
+  if (!global.yahooToken) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+
   try {
-    if (req.session.yahooToken.expires_at && Date.now() >= req.session.yahooToken.expires_at) {
-      // Token refresh logic would go here
-      console.log('Token expired, refresh logic needed');
-    }
-
-    yf.setUserToken(req.session.yahooToken.access_token);
-
     const leagueKey = req.params.league_key;
     const leagueData = await new Promise((resolve, reject) => {
-      yf.league.meta(leagueKey, (err, data) => err ? reject(err) : resolve(data));
+      yf.league.meta(
+        leagueKey,
+        (err, data) => err ? reject(err) : resolve(data)
+      );
     });
 
     const standingsData = await new Promise((resolve, reject) => {
-      yf.league.standings(leagueKey, (err, data) => err ? reject(err) : resolve(data));
+      yf.league.standings(
+        leagueKey,
+        (err, data) => err ? reject(err) : resolve(data)
+      );
     });
-
-    if (!standingsData || !standingsData.standings) {
-      throw new Error('No standings data available');
-    }
 
     res.json({ 
       league: leagueData,
@@ -244,14 +203,14 @@ app.get('/league/:league_key', isAuthenticated, async (req, res) => {
   }
 });
 
-// Implement a simple keep-alive route
-app.get('/keep-alive', (req, res) => {
-  res.status(200).send('OK');
-});
-
-// Test route
-app.get('/test', (req, res) => {
-  res.json({ message: 'Server is running' });
+// Debug route to check environment variables
+app.get('/debug', (req, res) => {
+  res.json({
+    YAHOO_APPLICATION_KEY: process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set',
+    YAHOO_APPLICATION_SECRET: process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set',
+    YAHOO_REDIRECT_URI: process.env.YAHOO_REDIRECT_URI,
+    PORT: process.env.PORT || 3000
+  });
 });
 
 // Custom error handler
