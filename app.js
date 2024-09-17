@@ -93,7 +93,7 @@ app.get('/auth/yahoo/callback', async (req, res) => {
       redirect_uri: redirectUri
     };
     const accessToken = await client.getToken(tokenParams);
-
+    
     // Store the token in the session
     req.session.yahooToken = accessToken.token;
 
@@ -103,6 +103,14 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
+    
+    // Check if the error is due to an expired authorization code
+    if (error.data && error.data.payload && error.data.payload.error === 'invalid_grant' &&
+        error.data.payload.error_description === 'Authorization code expired') {
+      console.log('Authorization code expired, redirecting to auth page');
+      return res.redirect('/auth/yahoo');  // Redirect back to the authorization page
+    }
+    
     res.status(500).json({ 
       error: 'Authentication failed', 
       details: error.message
