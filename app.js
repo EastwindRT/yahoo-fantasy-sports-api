@@ -56,9 +56,22 @@ const refreshToken = async () => {
   }
 };
 
+// Middleware to check if the user is authenticated
+const isAuthenticated = (req, res, next) => {
+  if (global.yahooToken) {
+    next();
+  } else {
+    res.redirect('/auth/yahoo');
+  }
+};
+
 // Routes
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  if (global.yahooToken) {
+    res.redirect('/dashboard');
+  } else {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
 });
 
 app.get('/auth/yahoo', (req, res) => {
@@ -124,12 +137,8 @@ app.get('/auth/yahoo/callback', async (req, res) => {
   }
 });
 
-app.get('/dashboard', (req, res) => {
-  if (!global.yahooToken) {
-    res.redirect('/auth/yahoo');
-  } else {
-    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
-  }
+app.get('/dashboard', isAuthenticated, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
 app.get('/check-auth', (req, res) => {
@@ -151,12 +160,8 @@ app.get('/check-auth', (req, res) => {
   }
 });
 
-app.get('/my-leagues', async (req, res) => {
+app.get('/my-leagues', isAuthenticated, async (req, res) => {
   console.log('MY-LEAGUES ROUTE CALLED');
-  if (!global.yahooToken) {
-    console.log('No Yahoo token found');
-    return res.status(401).json({ error: 'Not authenticated' });
-  }
 
   try {
     if (global.yahooToken.expires_at && Date.now() >= global.yahooToken.expires_at) {
@@ -169,22 +174,34 @@ app.get('/my-leagues', async (req, res) => {
       yf.user.games((err, data) => err ? reject(err) : resolve(data));
     });
 
-    console.log('User games:', userData.games);
+    console.log('User data:', JSON.stringify(userData, null, 2));
 
-    const nbaGame = userData.games
-      .filter(game => game.code === 'nba')
-      .sort((a, b) => parseInt(b.season) - parseInt(a.season))[0];
-
-    if (!nbaGame) {
-      console.log('No NBA game found for user');
-      return res.status(404).json({ error: 'No NBA game found for this user.' });
+    if (!userData.games || userData.games.length === 0) {
+      console.log('No games found for user');
+      return res.json({
+        user: { guid: userData.guid },
+        games: [],
+        message: 'No fantasy games found for this user.'
+      });
     }
 
-    console.log('Most recent NBA game:', nbaGame);
+    const nbaGames = userData.games.filter(game => game.code === 'nba');
+
+    if (nbaGames.length === 0) {
+      console.log('No NBA games found for user');
+      return res.json({
+        user: { guid: userData.guid },
+        games: userData.games,
+        message: 'No NBA fantasy games found for this user.'
+      });
+    }
+
+    const mostRecentNbaGame = nbaGames.sort((a, b) => parseInt(b.season) - parseInt(a.season))[0];
+    console.log('Most recent NBA game:', JSON.stringify(mostRecentNbaGame, null, 2));
 
     console.log('Fetching user leagues');
     const leaguesData = await new Promise((resolve, reject) => {
-      yf.user.game_leagues(nbaGame.game_key, (err, data) => err ? reject(err) : resolve(data));
+      yf.user.game_leagues(mostRecentNbaGame.game_key, (err, data) => err ? reject(err) : resolve(data));
     });
 
     console.log('Leagues data:', JSON.stringify(leaguesData, null, 2));
@@ -212,10 +229,10 @@ app.get('/my-leagues', async (req, res) => {
         guid: userData.guid
       },
       game: {
-        name: nbaGame.name,
-        season: nbaGame.season,
-        is_game_over: nbaGame.is_game_over,
-        is_offseason: nbaGame.is_offseason
+        name: mostRecentNbaGame.name,
+        season: mostRecentNbaGame.season,
+        is_game_over: mostRecentNbaGame.is_game_over,
+        is_offseason: mostRecentNbaGame.is_offseason
       }
     });
   } catch (error) {
@@ -224,12 +241,8 @@ app.get('/my-leagues', async (req, res) => {
   }
 });
 
-app.get('/league/:league_key', async (req, res) => {
+app.get('/league/:league_key', isAuthenticated, async (req, res) => {
   console.log('Entering /league/:league_key route');
-  if (!global.yahooToken) {
-    console.log('No Yahoo token found');
-    return res.status(401).json({ error: 'Not authenticated' });
-  }
 
   try {
     if (global.yahooToken.expires_at && Date.now() >= global.yahooToken.expires_at) {
