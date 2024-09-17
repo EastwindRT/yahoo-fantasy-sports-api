@@ -109,6 +109,8 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     // Use the token to initialize YahooFantasy
     yf.setUserToken(accessToken.token.access_token);
 
+    console.log('Yahoo Token set:', !!global.yahooToken);
+
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
@@ -129,28 +131,25 @@ app.get('/dashboard', (req, res) => {
   }
 });
 
-app.get('/check-auth', (req, res) => {
-  if (global.yahooToken) {
-    res.json({ authenticated: true });
-  } else {
-    res.json({ authenticated: false });
-  }
-});
-
 app.get('/my-leagues', async (req, res) => {
-  console.log('Entering /my-leagues route');
+  console.log('MY-LEAGUES ROUTE CALLED');
+  console.log('Yahoo Token exists:', !!global.yahooToken);
+
   if (!global.yahooToken) {
     console.log('No Yahoo token found');
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
+  console.log('Token expiration:', new Date(global.yahooToken.expires_at));
+
   try {
     if (global.yahooToken.expires_at && Date.now() >= global.yahooToken.expires_at) {
-      console.log('Token expired, refreshing');
+      console.log('Token expired, attempting to refresh');
       await refreshToken();
+      console.log('Token refreshed successfully');
     }
 
-    console.log('Fetching user games');
+    console.log('Attempting to fetch user games');
     const userData = await new Promise((resolve, reject) => {
       yf.user.games(
         (err, data) => {
@@ -165,7 +164,7 @@ app.get('/my-leagues', async (req, res) => {
       );
     });
 
-    console.log('User data:', userData);
+    console.log('User data:', JSON.stringify(userData, null, 2));
 
     const nbaGame = userData.games.find(game => game.code === 'nba');
 
@@ -174,9 +173,9 @@ app.get('/my-leagues', async (req, res) => {
       return res.status(404).json({ error: 'No NBA game found for this user.' });
     }
 
-    console.log('NBA game found:', nbaGame);
+    console.log('NBA game found:', JSON.stringify(nbaGame, null, 2));
 
-    console.log('Fetching user leagues');
+    console.log('Attempting to fetch user leagues');
     const leaguesData = await new Promise((resolve, reject) => {
       yf.user.game_leagues(
         nbaGame.game_key,
@@ -192,7 +191,7 @@ app.get('/my-leagues', async (req, res) => {
       );
     });
 
-    console.log('Leagues data:', leaguesData);
+    console.log('Leagues data:', JSON.stringify(leaguesData, null, 2));
 
     const leagues = leaguesData.games[0].leagues.map(league => ({
       name: league.name,
@@ -225,8 +224,12 @@ app.get('/my-leagues', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error in /my-leagues:', error);
-    res.status(500).json({ error: 'Failed to fetch league data', details: error.message });
+    console.error('Detailed error in /my-leagues:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch league data', 
+      details: error.message,
+      stack: error.stack
+    });
   }
 });
 
