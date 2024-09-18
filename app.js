@@ -1,3 +1,4 @@
+const config = require('./config');
 const express = require('express');
 const session = require('express-session');
 const pgSession = require('connect-pg-simple')(session);
@@ -5,13 +6,12 @@ const { Sequelize, DataTypes } = require('sequelize');
 const YahooFantasy = require('yahoo-fantasy');
 const { AuthorizationCode } = require('simple-oauth2');
 const path = require('path');
-require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = config.port;
 
 // Database setup
-const sequelize = new Sequelize(process.env.DATABASE_URL, {
+const sequelize = new Sequelize(config.databaseUrl, {
   dialect: 'postgres',
   dialectOptions: {
     ssl: {
@@ -44,15 +44,15 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
   store: new pgSession({
     conObject: {
-      connectionString: process.env.DATABASE_URL,
+      connectionString: config.databaseUrl,
       ssl: { rejectUnauthorized: false }
     }
   }),
-  secret: process.env.SESSION_SECRET,
+  secret: config.sessionSecret,
   resave: false,
   saveUninitialized: false,
   cookie: { 
-    secure: process.env.NODE_ENV === 'production',
+    secure: config.nodeEnv === 'production',
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   }
 }));
@@ -60,8 +60,8 @@ app.use(session({
 // Yahoo OAuth setup
 const client = new AuthorizationCode({
   client: {
-    id: process.env.YAHOO_CLIENT_ID,
-    secret: process.env.YAHOO_CLIENT_SECRET
+    id: config.yahooClientId,
+    secret: config.yahooClientSecret
   },
   auth: {
     tokenHost: 'https://api.login.yahoo.com',
@@ -70,12 +70,10 @@ const client = new AuthorizationCode({
   }
 });
 
-const redirectUri = process.env.YAHOO_REDIRECT_URI;
-
 // Initialize YahooFantasy
 const yf = new YahooFantasy(
-  process.env.YAHOO_CLIENT_ID,
-  process.env.YAHOO_CLIENT_SECRET
+  config.yahooClientId,
+  config.yahooClientSecret
 );
 
 // Middleware to check if user is authenticated
@@ -113,12 +111,21 @@ app.get('/', (req, res) => {
 });
 
 app.get('/auth/yahoo', (req, res) => {
-  const authorizationUri = client.authorizeURL({
-    redirect_uri: redirectUri,
-    scope: 'openid fspt-r',
-  });
-  console.log('Redirecting to Yahoo authorization URL:', authorizationUri);
-  res.redirect(authorizationUri);
+  console.log('Entering /auth/yahoo route');
+  console.log('YAHOO_CLIENT_ID when generating auth URL:', config.yahooClientId);
+  console.log('Redirect URI:', config.yahooRedirectUri);
+
+  try {
+    const authorizationUri = client.authorizeURL({
+      redirect_uri: config.yahooRedirectUri,
+      scope: 'openid fspt-r',
+    });
+    console.log('Generated Yahoo authorization URL:', authorizationUri);
+    res.redirect(authorizationUri);
+  } catch (error) {
+    console.error('Error generating authorization URL:', error);
+    res.status(500).send('Error during authorization process');
+  }
 });
 
 app.get('/auth/yahoo/callback', async (req, res) => {
@@ -128,7 +135,7 @@ app.get('/auth/yahoo/callback', async (req, res) => {
 
     const tokenResponse = await client.getToken({
       code,
-      redirect_uri: redirectUri
+      redirect_uri: config.yahooRedirectUri
     });
     console.log('Token response received:', JSON.stringify(tokenResponse, null, 2));
 
