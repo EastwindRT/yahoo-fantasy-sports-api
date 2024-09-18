@@ -146,6 +146,12 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     return res.status(400).send('No code provided in callback.');
   }
 
+  // Check if we already have a valid token
+  if (req.session.yahooToken && new Date(req.session.yahooToken.expires_at) > new Date()) {
+    console.log('Valid token already exists in session, skipping token exchange');
+    return res.redirect('/dashboard');
+  }
+
   try {
     const tokenParams = {
       code: req.query.code,
@@ -165,6 +171,9 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
+    if (error.data && error.data.payload) {
+      console.error('Error payload:', error.data.payload);
+    }
     if (!res.headersSent) {
       res.status(500).json({ 
         error: 'Authentication failed', 
@@ -338,6 +347,14 @@ app.get('/logout', (req, res) => {
   });
 });
 
+app.get('/debug/session', (req, res) => {
+  res.json({
+    sessionExists: !!req.session,
+    yahooTokenExists: !!req.session.yahooToken,
+    tokenExpiresAt: req.session.yahooToken ? req.session.yahooToken.expires_at : null,
+    isTokenValid: req.session.yahooToken ? new Date(req.session.yahooToken.expires_at) > new Date() : false
+  });
+});
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
