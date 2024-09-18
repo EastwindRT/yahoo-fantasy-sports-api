@@ -26,18 +26,21 @@
     "express"
   ],
   "author": "EastwindRT",
-    "license": "MIT",
-    "bugs": {
+  "license": "MIT",
+  "bugs": {
     "url": "https://github.com/EastwindRT/yahoo-fantasy-app/issues"
   },
   "homepage": "https://github.com/EastwindRT/yahoo-fantasy-app#readme",
   "dependencies": {
+    "connect-mongo": "^4.6.0",
     "dotenv": "^10.0.0",
     "express": "^4.21.0",
-    "express-session": "^1.17.2",
-    "connect-mongo": "^4.6.0",
+    "express-session": "^1.18.0",
     "follow-redirects": "^1.15.2",
     "oauth-signature": "^1.5.0",
+    "pg": "^8.13.0",
+    "pg-hstore": "^2.3.4",
+    "sequelize": "^6.37.3",
     "simple-oauth2": "^5.1.0",
     "uuid": "^9.0.0",
     "yahoo-fantasy": "^5.3.0"

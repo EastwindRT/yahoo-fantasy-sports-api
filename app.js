@@ -1,34 +1,57 @@
 const express = require('express');
+const session = require('express-session');
+const { Sequelize, DataTypes } = require('sequelize');
 const YahooFantasy = require('yahoo-fantasy');
 const { AuthorizationCode } = require('simple-oauth2');
-const dotenv = require('dotenv');
 const path = require('path');
-dotenv.config();
+require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Serve static files from the 'public' directory
+// Database setup
+const sequelize = new Sequelize(process.env.DATABASE_URL, {
+  dialect: 'postgres',
+  dialectOptions: {
+    ssl: {
+      require: true,
+      rejectUnauthorized: false
+    }
+  }
+});
+
+// Define User model
+const User = sequelize.define('User', {
+  yahooId: {
+    type: DataTypes.STRING,
+    unique: true
+  },
+  accessToken: DataTypes.TEXT,
+  refreshToken: DataTypes.TEXT,
+  tokenExpiry: DataTypes.DATE
+});
+
+// Sync database
+sequelize.sync();
+
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Logging environment variables (be careful not to log sensitive information in production)
-console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
-console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
-console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI);
+// Session middleware
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: process.env.NODE_ENV === 'production' }
+}));
 
-// Initialize YahooFantasy
-const yf = new YahooFantasy(
-  process.env.YAHOO_APPLICATION_KEY,
-  process.env.YAHOO_APPLICATION_SECRET,
-  null,
-  process.env.YAHOO_REDIRECT_URI
-);
-
-// Initialize simple-oauth2 client
+// Yahoo OAuth setup
 const client = new AuthorizationCode({
   client: {
-    id: process.env.YAHOO_APPLICATION_KEY,
-    secret: process.env.YAHOO_APPLICATION_SECRET
+    id: process.env.YAHOO_CLIENT_ID,
+    secret: process.env.YAHOO_CLIENT_SECRET
   },
   auth: {
     tokenHost: 'https://api.login.yahoo.com',
@@ -39,101 +62,83 @@ const client = new AuthorizationCode({
 
 const redirectUri = process.env.YAHOO_REDIRECT_URI;
 
-// Token refresh mechanism
-const refreshToken = async () => {
-  try {
-    console.log('Refreshing token');
-    const accessToken = await client.getToken({
-      refresh_token: global.yahooToken.refresh_token,
-      grant_type: 'refresh_token'
-    });
-    global.yahooToken = accessToken.token;
-    yf.setUserToken(accessToken.token.access_token);
-    console.log('Token refreshed successfully');
-  } catch (error) {
-    console.error('Error refreshing token:', error);
-    throw error;
-  }
-};
+// Initialize YahooFantasy
+const yf = new YahooFantasy(
+  process.env.YAHOO_CLIENT_ID,
+  process.env.YAHOO_CLIENT_SECRET
+);
 
-// Middleware to check if the user is authenticated
-const isAuthenticated = (req, res, next) => {
-  if (global.yahooToken) {
-    next();
-  } else {
-    res.redirect('/auth/yahoo');
+// Middleware to check if user is authenticated
+const isAuthenticated = async (req, res, next) => {
+  if (!req.session.userId) {
+    return res.redirect('/auth/yahoo');
   }
+  const user = await User.findByPk(req.session.userId);
+  if (!user) {
+    return res.redirect('/auth/yahoo');
+  }
+  if (new Date() > new Date(user.tokenExpiry)) {
+    try {
+      const refreshedTokens = await client.getToken({
+        refresh_token: user.refreshToken,
+        grant_type: 'refresh_token'
+      });
+      await user.update({
+        accessToken: refreshedTokens.token.access_token,
+        refreshToken: refreshedTokens.token.refresh_token,
+        tokenExpiry: new Date(refreshedTokens.token.expires_at)
+      });
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+      return res.redirect('/auth/yahoo');
+    }
+  }
+  req.user = user;
+  next();
 };
 
 // Routes
 app.get('/', (req, res) => {
-  if (global.yahooToken) {
-    res.redirect('/dashboard');
-  } else {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-  }
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/auth/yahoo', (req, res) => {
-  try {
-    const authorizationUri = client.authorizeURL({
-      redirect_uri: redirectUri,
-      scope: 'openid fspt-r',
-    });
-    console.log('Generated authorization URI:', authorizationUri);
-    res.redirect(authorizationUri);
-  } catch (error) {
-    console.error('Error generating authorization URL:', error);
-    res.status(500).json({ 
-      error: 'Failed to generate authorization URL', 
-      details: error.message,
-      stack: error.stack
-    });
-  }
+  const authorizationUri = client.authorizeURL({
+    redirect_uri: redirectUri,
+    scope: 'openid fspt-r',
+  });
+  res.redirect(authorizationUri);
 });
 
 app.get('/auth/yahoo/callback', async (req, res) => {
-  console.log('Entering /auth/yahoo/callback route');
-  console.log('Full request query:', req.query);
-
-  if (req.query.error) {
-    console.error('OAuth error:', req.query.error);
-    console.error('Error description:', req.query.error_description);
-    return res.status(400).json({ error: req.query.error, description: req.query.error_description });
-  }
-
-  if (!req.query.code) {
-    console.error('No code provided in callback');
-    return res.status(400).json({ error: 'No code provided in callback', query: req.query });
-  }
-
   try {
-    const tokenParams = {
-      code: req.query.code,
+    const { code } = req.query;
+    const tokenResponse = await client.getToken({
+      code,
       redirect_uri: redirectUri
-    };
-    console.log('Token params:', tokenParams);
-    const accessToken = await client.getToken(tokenParams);
-    console.log('Access Token received:', accessToken.token);
+    });
 
-    // Store the token
-    global.yahooToken = accessToken.token;
-
-    // Use the token to initialize YahooFantasy
-    yf.setUserToken(accessToken.token.access_token);
-
-    console.log('Yahoo Token set:', !!global.yahooToken);
-    console.log('Token expiration:', new Date(global.yahooToken.expires_at));
-
+    const yahooId = tokenResponse.token.id_token; // You might need to decode this to get the actual Yahoo ID
+    let user = await User.findOne({ where: { yahooId } });
+    if (!user) {
+      user = await User.create({
+        yahooId,
+        accessToken: tokenResponse.token.access_token,
+        refreshToken: tokenResponse.token.refresh_token,
+        tokenExpiry: new Date(tokenResponse.token.expires_at)
+      });
+    } else {
+      await user.update({
+        accessToken: tokenResponse.token.access_token,
+        refreshToken: tokenResponse.token.refresh_token,
+        tokenExpiry: new Date(tokenResponse.token.expires_at)
+      });
+    }
+    req.session.userId = user.id;
     res.redirect('/dashboard');
   } catch (error) {
-    console.error('Authentication error:', error);
-    res.status(500).json({ 
-      error: 'Authentication failed', 
-      details: error.message,
-      stack: error.stack,
-      query: req.query
-    });
+    console.error('Error in auth callback:', error);
+    res.redirect('/auth/yahoo');
   }
 });
 
@@ -141,70 +146,35 @@ app.get('/dashboard', isAuthenticated, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-app.get('/check-auth', (req, res) => {
-  console.log('Check-auth route called');
-  console.log('Yahoo Token exists:', !!global.yahooToken);
-  if (global.yahooToken) {
-    console.log('Token expiration:', new Date(global.yahooToken.expires_at));
-    res.json({ 
-      authenticated: true, 
-      tokenExists: true,
-      tokenExpiration: global.yahooToken.expires_at
+app.get('/api/user', isAuthenticated, async (req, res) => {
+  try {
+    yf.setUserToken(req.user.accessToken);
+    const userData = await new Promise((resolve, reject) => {
+      yf.user.games((err, data) => err ? reject(err) : resolve(data));
     });
-  } else {
-    res.json({ 
-      authenticated: false, 
-      tokenExists: false,
-      reason: 'No Yahoo token found'
-    });
+    res.json(userData);
+  } catch (error) {
+    console.error('Error fetching user data:', error);
+    res.status(500).json({ error: 'Failed to fetch user data' });
   }
 });
 
-app.get('/my-leagues', isAuthenticated, async (req, res) => {
-  console.log('MY-LEAGUES ROUTE CALLED');
-
+app.get('/api/my-leagues/:year', isAuthenticated, async (req, res) => {
   try {
-    if (global.yahooToken.expires_at && Date.now() >= global.yahooToken.expires_at) {
-      console.log('Token expired, attempting to refresh');
-      await refreshToken();
-    }
-
-    console.log('Fetching user games');
+    yf.setUserToken(req.user.accessToken);
     const userData = await new Promise((resolve, reject) => {
       yf.user.games((err, data) => err ? reject(err) : resolve(data));
     });
 
-    console.log('User data:', JSON.stringify(userData, null, 2));
+    const nbaGame = userData.games.find(game => game.code === 'nba' && game.season === req.params.year);
 
-    if (!userData.games || userData.games.length === 0) {
-      console.log('No games found for user');
-      return res.json({
-        user: { guid: userData.guid },
-        games: [],
-        message: 'No fantasy games found for this user.'
-      });
+    if (!nbaGame) {
+      return res.status(404).json({ error: `No NBA game found for year ${req.params.year}` });
     }
 
-    const nbaGames = userData.games.filter(game => game.code === 'nba');
-
-    if (nbaGames.length === 0) {
-      console.log('No NBA games found for user');
-      return res.json({
-        user: { guid: userData.guid },
-        games: userData.games,
-        message: 'No NBA fantasy games found for this user.'
-      });
-    }
-
-    const mostRecentNbaGame = nbaGames.sort((a, b) => parseInt(b.season) - parseInt(a.season))[0];
-    console.log('Most recent NBA game:', JSON.stringify(mostRecentNbaGame, null, 2));
-
-    console.log('Fetching user leagues');
     const leaguesData = await new Promise((resolve, reject) => {
-      yf.user.game_leagues(mostRecentNbaGame.game_key, (err, data) => err ? reject(err) : resolve(data));
+      yf.user.game_leagues(nbaGame.game_key, (err, data) => err ? reject(err) : resolve(data));
     });
-
-    console.log('Leagues data:', JSON.stringify(leaguesData, null, 2));
 
     const leagues = leaguesData.games[0].leagues.map(league => ({
       name: league.name,
@@ -229,10 +199,10 @@ app.get('/my-leagues', isAuthenticated, async (req, res) => {
         guid: userData.guid
       },
       game: {
-        name: mostRecentNbaGame.name,
-        season: mostRecentNbaGame.season,
-        is_game_over: mostRecentNbaGame.is_game_over,
-        is_offseason: mostRecentNbaGame.is_offseason
+        name: nbaGame.name,
+        season: nbaGame.season,
+        is_game_over: nbaGame.is_game_over,
+        is_offseason: nbaGame.is_offseason
       }
     });
   } catch (error) {
@@ -241,31 +211,19 @@ app.get('/my-leagues', isAuthenticated, async (req, res) => {
   }
 });
 
-app.get('/league/:league_key', isAuthenticated, async (req, res) => {
-  console.log('Entering /league/:league_key route');
-
+app.get('/api/league/:league_key', isAuthenticated, async (req, res) => {
   try {
-    if (global.yahooToken.expires_at && Date.now() >= global.yahooToken.expires_at) {
-      console.log('Token expired, refreshing');
-      await refreshToken();
-    }
-
+    yf.setUserToken(req.user.accessToken);
     const leagueKey = req.params.league_key;
-    console.log('Fetching league data for:', leagueKey);
+
     const leagueData = await new Promise((resolve, reject) => {
       yf.league.meta(leagueKey, (err, data) => err ? reject(err) : resolve(data));
     });
 
-    console.log('Fetching league standings');
     const standingsData = await new Promise((resolve, reject) => {
       yf.league.standings(leagueKey, (err, data) => err ? reject(err) : resolve(data));
     });
 
-    if (!standingsData || !standingsData.standings) {
-      throw new Error('No standings data available');
-    }
-
-    console.log('Sending response');
     res.json({ 
       league: leagueData,
       standings: standingsData.standings
@@ -276,44 +234,22 @@ app.get('/league/:league_key', isAuthenticated, async (req, res) => {
   }
 });
 
-// Test route
-app.get('/test', (req, res) => {
-  res.json({ message: 'Server is running' });
-});
-
-// Token test route
-app.get('/token-test', (req, res) => {
-  if (global.yahooToken) {
-    res.json({
-      tokenExists: true,
-      expiresAt: global.yahooToken.expires_at,
-      accessTokenLength: global.yahooToken.access_token.length
-    });
-  } else {
-    res.json({ tokenExists: false });
-  }
-});
-
-// Debug route to check environment variables
-app.get('/debug', (req, res) => {
-  res.json({
-    YAHOO_APPLICATION_KEY: process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set',
-    YAHOO_APPLICATION_SECRET: process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set',
-    YAHOO_REDIRECT_URI: process.env.YAHOO_REDIRECT_URI,
-    PORT: process.env.PORT || 3000
+app.get('/logout', (req, res) => {
+  req.session.destroy(err => {
+    if (err) {
+      console.error('Error destroying session:', err);
+    }
+    res.redirect('/');
   });
 });
 
-// Custom error handler
+// Error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Something went wrong', message: err.message });
+  console.error(err.stack);
+  res.status(500).send('Something broke!');
 });
 
+// Start the server
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
