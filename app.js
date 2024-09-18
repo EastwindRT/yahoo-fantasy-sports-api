@@ -20,6 +20,22 @@ const pool = new Pool({
   }
 });
 
+// Create session table if it doesn't exist
+pool.query(`
+  CREATE TABLE IF NOT EXISTS "session" (
+    "sid" varchar NOT NULL COLLATE "default",
+    "sess" json NOT NULL,
+    "expire" timestamp(6) NOT NULL
+  )
+  WITH (OIDS=FALSE);
+  ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;
+  CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+`).then(() => {
+  console.log("Session table created or already exists.");
+}).catch(err => {
+  console.error("Error creating session table:", err);
+});
+
 // Logging environment variables (be careful not to log sensitive information in production)
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
 console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
@@ -54,7 +70,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
   store: new pgSession({
     pool: pool,
-    tableName: 'session' // This table will be created automatically
+    tableName: 'session'
   }),
   secret: process.env.SESSION_SECRET || 'your_session_secret',
   resave: false,
@@ -139,23 +155,30 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     const accessToken = await client.getToken(tokenParams);
     console.log('Access Token received:', accessToken.token);
 
+    console.log('Storing token in session');
     req.session.yahooToken = accessToken.token;
+
+    console.log('Setting user token for YahooFantasy');
     yf.setUserToken(accessToken.token.access_token);
 
+    console.log('Redirecting to dashboard');
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
-    res.status(500).json({ 
-      error: 'Authentication failed', 
-      details: error.message,
-      stack: error.stack,
-      query: req.query
-    });
+    if (!res.headersSent) {
+      res.status(500).json({ 
+        error: 'Authentication failed', 
+        details: error.message,
+        stack: error.stack,
+        query: req.query
+      });
+    }
   }
 });
 
 app.get('/dashboard', ensureToken, async (req, res) => {
   try {
+    console.log('Fetching user data');
     const userData = await new Promise((resolve, reject) => {
       yf.user.games((err, data) => err ? reject(err) : resolve(data));
     });
@@ -165,6 +188,7 @@ app.get('/dashboard', ensureToken, async (req, res) => {
 
     let userLeagues = [];
     if (nflGame) {
+      console.log('Fetching user leagues');
       userLeagues = await new Promise((resolve, reject) => {
         yf.user.game_leagues(nflGame.game_key, (err, data) => err ? reject(err) : resolve(data));
       });
@@ -234,6 +258,7 @@ app.get('/dashboard', ensureToken, async (req, res) => {
       </html>
     `;
 
+    console.log('Sending dashboard HTML');
     res.send(dashboardHtml);
   } catch (error) {
     console.error('Error fetching dashboard data:', error);
@@ -243,10 +268,12 @@ app.get('/dashboard', ensureToken, async (req, res) => {
 
 app.get('/myLeagues', ensureToken, async (req, res) => {
   try {
+    console.log('Fetching user games');
     const userData = await new Promise((resolve, reject) => {
       yf.user.games((err, data) => err ? reject(err) : resolve(data));
     });
 
+    console.log('Fetching leagues for each game');
     const leagues = await Promise.all(userData.games.map(async game => {
       const gameLeagues = await new Promise((resolve, reject) => {
         yf.user.game_leagues(game.game_key, (err, data) => err ? reject(err) : resolve(data));
@@ -268,10 +295,12 @@ app.get('/league/:league_key', ensureToken, async (req, res) => {
   try {
     const leagueKey = req.params.league_key;
 
+    console.log(`Fetching league meta for ${leagueKey}`);
     const leagueData = await new Promise((resolve, reject) => {
       yf.league.meta(leagueKey, (err, data) => err ? reject(err) : resolve(data));
     });
 
+    console.log(`Fetching standings for ${leagueKey}`);
     const standingsData = await new Promise((resolve, reject) => {
       yf.league.standings(leagueKey, (err, data) => err ? reject(err) : resolve(data));
     });
@@ -288,6 +317,7 @@ app.get('/league/:league_key', ensureToken, async (req, res) => {
 
 app.get('/user-info', ensureToken, async (req, res) => {
   try {
+    console.log('Fetching user information');
     const userData = await new Promise((resolve, reject) => {
       yf.user.games((err, data) => err ? reject(err) : resolve(data));
     });
@@ -299,6 +329,7 @@ app.get('/user-info', ensureToken, async (req, res) => {
 });
 
 app.get('/logout', (req, res) => {
+  console.log('Logging out user');
   req.session.destroy(err => {
     if (err) {
       console.error('Error destroying session:', err);
@@ -310,7 +341,9 @@ app.get('/logout', (req, res) => {
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  res.status(500).send('Something went wrong: ' + err.message);
+  if (!res.headersSent) {
+    res.status(500).send('Something went wrong: ' + err.message);
+  }
 });
 
 app.listen(port, () => {
