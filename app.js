@@ -94,23 +94,29 @@ app.get('/auth/yahoo/callback', async (req, res) => {
       redirect_uri: process.env.YAHOO_REDIRECT_URI
     };
     console.log('Token params:', tokenParams);
+    console.log('Redirect URI:', process.env.YAHOO_REDIRECT_URI);
+    console.log('Client ID:', process.env.YAHOO_APPLICATION_KEY);
+
     const accessToken = await client.getToken(tokenParams);
     console.log('Access Token received:', accessToken.token);
-    
+
     // Store the token in session
     req.session.yahooToken = accessToken.token;
 
     // Use the token to initialize YahooFantasy
     yf.setUserToken(accessToken.token.access_token);
-    
+
     res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
+    console.error('Error response:', error.response);
+    console.error('Error data:', error.data);
     res.status(500).json({ 
       error: 'Authentication failed', 
       details: error.message,
       stack: error.stack,
-      query: req.query
+      query: req.query,
+      response: error.response ? error.response.data : null
     });
   }
 });
