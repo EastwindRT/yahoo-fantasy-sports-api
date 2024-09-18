@@ -97,21 +97,26 @@ async function refreshAccessToken(refreshToken) {
 
 // Middleware to check and refresh token if necessary
 async function ensureToken(req, res, next) {
+  console.log('Entering ensureToken middleware');
   if (!req.session.yahooToken) {
+    console.log('No Yahoo token in session, redirecting to /auth/yahoo');
     return res.redirect('/auth/yahoo');
   }
 
   const now = Date.now();
   if (now >= req.session.yahooToken.expires_at - 60000) { // Refresh if within 1 minute of expiration
+    console.log('Token expired or close to expiring, refreshing...');
     try {
       const newToken = await refreshAccessToken(req.session.yahooToken.refresh_token);
       req.session.yahooToken = newToken;
       yf.setUserToken(newToken.access_token);
+      console.log('Token refreshed successfully');
     } catch (error) {
       console.error('Token refresh failed:', error);
       return res.redirect('/auth/yahoo');
     }
   } else {
+    console.log('Token is still valid');
     yf.setUserToken(req.session.yahooToken.access_token);
   }
 
@@ -135,6 +140,7 @@ app.get('/auth/yahoo', (req, res) => {
 app.get('/auth/yahoo/callback', async (req, res) => {
   console.log('Entering /auth/yahoo/callback route');
   console.log('Full request query:', req.query);
+  console.log('Referer:', req.get('Referer'));
 
   if (req.query.error) {
     console.error('OAuth error:', req.query.error);
@@ -144,12 +150,6 @@ app.get('/auth/yahoo/callback', async (req, res) => {
   if (!req.query.code) {
     console.error('No code provided in callback');
     return res.status(400).send('No code provided in callback.');
-  }
-
-  // Check if we already have a valid token
-  if (req.session.yahooToken && new Date(req.session.yahooToken.expires_at) > new Date()) {
-    console.log('Valid token already exists in session, skipping token exchange');
-    return res.redirect('/dashboard');
   }
 
   try {
@@ -168,14 +168,14 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     yf.setUserToken(accessToken.token.access_token);
 
     console.log('Redirecting to dashboard');
-    res.redirect('/dashboard');
+    return res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
     if (error.data && error.data.payload) {
       console.error('Error payload:', error.data.payload);
     }
     if (!res.headersSent) {
-      res.status(500).json({ 
+      return res.status(500).json({ 
         error: 'Authentication failed', 
         details: error.message,
         stack: error.stack,
@@ -186,11 +186,13 @@ app.get('/auth/yahoo/callback', async (req, res) => {
 });
 
 app.get('/dashboard', ensureToken, async (req, res) => {
+  console.log('Entering /dashboard route');
   try {
     console.log('Fetching user data');
     const userData = await new Promise((resolve, reject) => {
       yf.user.games((err, data) => err ? reject(err) : resolve(data));
     });
+    console.log('User data fetched successfully');
 
     const currentYear = new Date().getFullYear();
     const nflGame = userData.games.find(game => game.code === 'nfl' && game.season === currentYear.toString());
@@ -201,8 +203,10 @@ app.get('/dashboard', ensureToken, async (req, res) => {
       userLeagues = await new Promise((resolve, reject) => {
         yf.user.game_leagues(nflGame.game_key, (err, data) => err ? reject(err) : resolve(data));
       });
+      console.log('User leagues fetched successfully');
     }
 
+    console.log('Rendering dashboard HTML');
     const dashboardHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -270,12 +274,32 @@ app.get('/dashboard', ensureToken, async (req, res) => {
     console.log('Sending dashboard HTML');
     res.send(dashboardHtml);
   } catch (error) {
-    console.error('Error fetching dashboard data:', error);
+    console.error('Error in /dashboard route:', error);
     res.status(500).send('Error loading dashboard. Please try again later.');
   }
 });
 
+app.get('/direct-dashboard', (req, res) => {
+  console.log('Serving direct dashboard HTML');
+  const dashboardHtml = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Direct Dashboard</title>
+    </head>
+    <body>
+      <h1>This is a direct dashboard page</h1>
+      <p>If you can see this, HTML serving is working correctly.</p>
+    </body>
+    </html>
+  `;
+  res.send(dashboardHtml);
+});
+
 app.get('/myLeagues', ensureToken, async (req, res) => {
+  console.log('Entering /myLeagues route');
   try {
     console.log('Fetching user games');
     const userData = await new Promise((resolve, reject) => {
@@ -301,6 +325,7 @@ app.get('/myLeagues', ensureToken, async (req, res) => {
 });
 
 app.get('/league/:league_key', ensureToken, async (req, res) => {
+  console.log(`Entering /league/${req.params.league_key} route`);
   try {
     const leagueKey = req.params.league_key;
 
@@ -325,6 +350,7 @@ app.get('/league/:league_key', ensureToken, async (req, res) => {
 });
 
 app.get('/user-info', ensureToken, async (req, res) => {
+  console.log('Entering /user-info route');
   try {
     console.log('Fetching user information');
     const userData = await new Promise((resolve, reject) => {
@@ -347,26 +373,46 @@ app.get('/logout', (req, res) => {
   });
 });
 
-app.get('/debug/session', (req, res) => {
+app.get('/debug', (req, res) => {
+  console.log('Entering /debug route');
   res.json({
-    sessionExists: !!req.session,
-    yahooTokenExists: !!req.session.yahooToken,
-    tokenExpiresAt: req.session.yahooToken ? req.session.yahooToken.expires_at : null,
-    isTokenValid: req.session.yahooToken ? new Date(req.session.yahooToken.expires_at) > new Date() : false
+    session: {
+      exists: !!req.session,
+      yahooToken: req.session.yahooToken ? {
+        exists: true,
+        expiresAt: req.session.yahooToken.expires_at,
+        isValid: new Date(req.session.yahooToken.expires_at) > new Date()
+      } : null
+    },
+    env: {
+      NODE_ENV: process.env.NODE_ENV,
+      PORT: process.env.PORT,
+      YAHOO_REDIRECT_URI: process.env.YAHOO_REDIRECT_URI,
+      DATABASE_URL: process.env.DATABASE_URL ? 'Set' : 'Not set',
+      YAHOO_APPLICATION_KEY: process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set',
+      YAHOO_APPLICATION_SECRET: process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set'
+    }
   });
 });
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
-  if (!res.headersSent) {
-    res.status(500).send('Something went wrong: ' + err.message);
-  }
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: err.message,
+    stack: process.env.NODE_ENV === 'production' ? '🥞' : err.stack
+  });
 });
 
+// Start the server
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
 
+// Global error handler for unhandled promises
 process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // In a production environment, you might want to do some cleanup and restart the server
+  // process.exit(1);
 });
