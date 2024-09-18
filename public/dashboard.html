@@ -1,211 +1,175 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Yahoo Fantasy Sports Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-</head>
-<body class="bg-gray-100">
-    <div class="container mx-auto px-4 py-8">
-        <header class="flex justify-between items-center mb-8">
-            <h1 class="text-3xl font-bold">Yahoo Fantasy Sports Dashboard</h1>
-            <a href="/logout" class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded">Logout</a>
-        </header>
+app.get('/dashboard', async (req, res) => {
+  if (!req.session.yahooToken) {
+    return res.redirect('/auth/yahoo');
+  }
 
-        <div id="user-info" class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4"></div>
+  try {
+    yf.setUserToken(req.session.yahooToken.access_token);
 
-        <div class="mb-4">
-            <label for="year-select" class="block text-gray-700 text-sm font-bold mb-2">Select Year:</label>
-            <select id="year-select" class="shadow border rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
-                <option value="">Select a year</option>
-            </select>
+    // Fetch user's games
+    const userGames = await new Promise((resolve, reject) => {
+      yf.user.games((err, data) => err ? reject(err) : resolve(data));
+    });
+
+    // Fetch user's leagues for the current NFL season
+    const currentYear = new Date().getFullYear();
+    const nflGame = userGames.games.find(game => game.code === 'nfl' && game.season === currentYear.toString());
+
+    let userLeagues = [];
+    if (nflGame) {
+      userLeagues = await new Promise((resolve, reject) => {
+        yf.user.game_leagues(nflGame.game_key, (err, data) => err ? reject(err) : resolve(data));
+      });
+    }
+
+    const dashboardHtml = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Yahoo Fantasy Sports Dashboard</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; }
+          h1, h2 { color: #333; }
+          .section { margin-bottom: 30px; }
+          .menu { list-style-type: none; padding: 0; }
+          .menu li { margin-bottom: 10px; }
+          .menu a, .button { display: inline-block; text-decoration: none; color: #fff; background-color: #0066cc; padding: 10px 15px; border-radius: 5px; }
+          .menu a:hover, .button:hover { background-color: #0056b3; }
+          .leagues { list-style-type: none; padding: 0; }
+          .leagues li { margin-bottom: 15px; background-color: #f0f0f0; padding: 10px; border-radius: 5px; }
+        </style>
+      </head>
+      <body>
+        <h1>Welcome to Your Yahoo Fantasy Sports Dashboard</h1>
+
+        <div class="section">
+          <h2>Quick Actions</h2>
+          <ul class="menu">
+            <li><a href="/test-api">Test API Connection</a></li>
+            <li><a href="/myLeagues">View All My Leagues</a></li>
+            <li><a href="/user-info">View User Information</a></li>
+            <li><a href="/logout">Logout</a></li>
+          </ul>
         </div>
 
-        <h2 class="text-2xl font-bold mb-4">My Leagues</h2>
-        <div id="leagues-table" class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4">
-            <p class="text-gray-700">Select a year to view leagues...</p>
+        <div class="section">
+          <h2>Your NFL Leagues for ${currentYear}</h2>
+          ${nflGame ? `
+            <ul class="leagues">
+              ${userLeagues.games[0].leagues.map(league => `
+                <li>
+                  <strong>${league.name}</strong> (${league.num_teams} teams)
+                  <br>
+                  Draft Status: ${league.draft_status}
+                  <br>
+                  <a href="/league/${league.league_key}" class="button">View League</a>
+                </li>
+              `).join('')}
+            </ul>
+          ` : `<p>No NFL leagues found for the current year.</p>`}
         </div>
 
-        <h2 class="text-2xl font-bold mb-4">League Details</h2>
-        <div class="mb-4">
-            <select id="league-select" class="shadow border rounded py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
-                <option value="">Select a league</option>
-            </select>
+        <div class="section">
+          <h2>Available Games</h2>
+          <ul class="leagues">
+            ${userGames.games.map(game => `
+              <li>
+                <strong>${game.name}</strong> (${game.season})
+                <br>
+                Status: ${game.is_game_over ? 'Game Over' : game.is_offseason ? 'Offseason' : 'Active'}
+              </li>
+            `).join('')}
+          </ul>
         </div>
-        <div id="league-details" class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4"></div>
-        <div id="standings-table" class="bg-white shadow-md rounded px-8 pt-6 pb-8 mb-4"></div>
-    </div>
+      </body>
+      </html>
+    `;
 
-    <script>
-        function loadYears() {
-            fetch('/api/user')
-                .then(response => response.json())
-                .then(data => {
-                    const yearSelect = document.getElementById('year-select');
-                    const years = data.games
-                        .filter(game => game.code === 'nba')
-                        .map(game => game.season)
-                        .sort((a, b) => b - a);
+    res.send(dashboardHtml);
+  } catch (error) {
+    console.error('Error fetching dashboard data:', error);
+    res.status(500).send('Error loading dashboard. Please try again later.');
+  }
+});
 
-                    years.forEach(year => {
-                        const option = document.createElement('option');
-                        option.value = year;
-                        option.textContent = year;
-                        yearSelect.appendChild(option);
-                    });
+// Add a new route for viewing a specific league
+app.get('/league/:league_key', async (req, res) => {
+  if (!req.session.yahooToken) {
+    return res.redirect('/auth/yahoo');
+  }
 
-                    yearSelect.addEventListener('change', loadLeagues);
+  try {
+    yf.setUserToken(req.session.yahooToken.access_token);
+    const leagueKey = req.params.league_key;
 
-                    // Display user info
-                    const userInfo = document.getElementById('user-info');
-                    userInfo.innerHTML = `
-                        <p><strong>User GUID:</strong> ${data.guid}</p>
-                        <p><strong>Games:</strong> ${data.games.map(g => g.name).join(', ')}</p>
-                    `;
-                })
-                .catch(error => {
-                    console.error('Error fetching user data:', error);
-                    document.getElementById('user-info').innerHTML = `<p class="text-red-500">Error loading user data. Please try again.</p>`;
-                });
-        }
+    const leagueData = await new Promise((resolve, reject) => {
+      yf.league.meta(leagueKey, (err, data) => err ? reject(err) : resolve(data));
+    });
 
-        function loadLeagues() {
-            const year = document.getElementById('year-select').value;
-            if (!year) return;
+    const standingsData = await new Promise((resolve, reject) => {
+      yf.league.standings(leagueKey, (err, data) => err ? reject(err) : resolve(data));
+    });
 
-            fetch(`/api/my-leagues/${year}`)
-                .then(response => response.json())
-                .then(data => {
-                    displayLeagues(data.leagues);
-                    populateLeagueSelect(data.leagues);
-                })
-                .catch(error => {
-                    console.error('Error fetching leagues:', error);
-                    document.getElementById('leagues-table').innerHTML = `
-                        <p class="text-red-500">Error fetching leagues: ${error.message}</p>
-                        <p>Please try again later.</p>
-                    `;
-                });
-        }
+    const leagueHtml = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${leagueData.name} - Yahoo Fantasy Sports</title>
+        <style>
+          body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; }
+          h1, h2 { color: #333; }
+          .section { margin-bottom: 30px; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+          th { background-color: #f2f2f2; }
+          .button { display: inline-block; text-decoration: none; color: #fff; background-color: #0066cc; padding: 10px 15px; border-radius: 5px; }
+          .button:hover { background-color: #0056b3; }
+        </style>
+      </head>
+      <body>
+        <h1>${leagueData.name}</h1>
+        <div class="section">
+          <h2>League Details</h2>
+          <p>Season: ${leagueData.season}</p>
+          <p>Number of Teams: ${leagueData.num_teams}</p>
+          <p>Scoring Type: ${leagueData.scoring_type}</p>
+          <p>Draft Status: ${leagueData.draft_status}</p>
+        </div>
+        <div class="section">
+          <h2>Standings</h2>
+          <table>
+            <tr>
+              <th>Rank</th>
+              <th>Team Name</th>
+              <th>W</th>
+              <th>L</th>
+              <th>T</th>
+              <th>Points For</th>
+            </tr>
+            ${standingsData.standings.map(team => `
+              <tr>
+                <td>${team.rank}</td>
+                <td>${team.name}</td>
+                <td>${team.number_of_moves}</td>
+                <td>${team.number_of_trades}</td>
+                <td>${team.clinched_playoffs === '1' ? 'Yes' : 'No'}</td>
+                <td>${team.points_for}</td>
+              </tr>
+            `).join('')}
+          </table>
+        </div>
+        <a href="/dashboard" class="button">Back to Dashboard</a>
+      </body>
+      </html>
+    `;
 
-        function displayLeagues(leagues) {
-            const leaguesTable = document.getElementById('leagues-table');
-            if (leagues && leagues.length > 0) {
-                let tableHTML = `
-                    <table class="min-w-full">
-                        <thead>
-                            <tr>
-                                <th class="px-4 py-2 text-left">Name</th>
-                                <th class="px-4 py-2 text-left">Teams</th>
-                                <th class="px-4 py-2 text-left">Draft Status</th>
-                                <th class="px-4 py-2 text-left">Scoring Type</th>
-                                <th class="px-4 py-2 text-left">Type</th>
-                                <th class="px-4 py-2 text-left">Current Week</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                `;
-                leagues.forEach(league => {
-                    tableHTML += `
-                        <tr>
-                            <td class="border px-4 py-2">${league.name}</td>
-                            <td class="border px-4 py-2">${league.num_teams}</td>
-                            <td class="border px-4 py-2">${league.draft_status}</td>
-                            <td class="border px-4 py-2">${league.scoring_type}</td>
-                            <td class="border px-4 py-2">${league.league_type}</td>
-                            <td class="border px-4 py-2">${league.current_week}</td>
-                        </tr>
-                    `;
-                });
-                tableHTML += '</tbody></table>';
-                leaguesTable.innerHTML = tableHTML;
-            } else {
-                leaguesTable.innerHTML = '<p class="text-gray-700">No leagues found for the selected year.</p>';
-            }
-        }
-
-        function populateLeagueSelect(leagues) {
-            const leagueSelect = document.getElementById('league-select');
-            leagueSelect.innerHTML = '<option value="">Select a league</option>';
-            leagues.forEach(league => {
-                const option = document.createElement('option');
-                option.value = league.league_key;
-                option.textContent = league.name;
-                leagueSelect.appendChild(option);
-            });
-            leagueSelect.addEventListener('change', loadLeagueDetails);
-        }
-
-        function loadLeagueDetails() {
-            const leagueKey = document.getElementById('league-select').value;
-            if (!leagueKey) return;
-
-            fetch(`/api/league/${leagueKey}`)
-                .then(response => response.json())
-                .then(data => {
-                    displayLeagueDetails(data.league);
-                    displayStandings(data.standings);
-                })
-                .catch(error => {
-                    console.error('Error fetching league details:', error);
-                    document.getElementById('league-details').innerHTML = `
-                        <p class="text-red-500">Error fetching league details: ${error.message}</p>
-                        <p>Please try again later.</p>
-                    `;
-                    document.getElementById('standings-table').innerHTML = '';
-                });
-        }
-
-        function displayLeagueDetails(league) {
-            const leagueDetails = document.getElementById('league-details');
-            leagueDetails.innerHTML = `
-                <h3 class="text-xl font-bold mb-2">${league.name}</h3>
-                <p><strong>League ID:</strong> ${league.league_id}</p>
-                <p><strong>Season:</strong> ${league.season}</p>
-                <p><strong>Start Date:</strong> ${league.start_date}</p>
-                <p><strong>End Date:</strong> ${league.end_date}</p>
-                <p><strong>Weekly Deadline:</strong> ${league.weekly_deadline}</p>
-            `;
-        }
-
-        function displayStandings(standings) {
-            const standingsTable = document.getElementById('standings-table');
-            if (standings && standings.length > 0) {
-                let tableHTML = `
-                    <table class="min-w-full">
-                        <thead>
-                            <tr>
-                                <th class="px-4 py-2 text-left">Rank</th>
-                                <th class="px-4 py-2 text-left">Team Name</th>
-                                <th class="px-4 py-2 text-left">W</th>
-                                <th class="px-4 py-2 text-left">L</th>
-                                <th class="px-4 py-2 text-left">T</th>
-                                <th class="px-4 py-2 text-left">Winning %</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                `;
-                standings.forEach(team => {
-                    tableHTML += `
-                        <tr>
-                            <td class="border px-4 py-2">${team.rank}</td>
-                            <td class="border px-4 py-2">${team.name}</td>
-                            <td class="border px-4 py-2">${team.outcome_totals.wins}</td>
-                            <td class="border px-4 py-2">${team.outcome_totals.losses}</td>
-                            <td class="border px-4 py-2">${team.outcome_totals.ties}</td>
-                            <td class="border px-4 py-2">${team.outcome_totals.percentage}</td>
-                        </tr>
-                    `;
-                });
-                tableHTML += '</tbody></table>';
-                standingsTable.innerHTML = tableHTML;
-            } else {
-                standingsTable.innerHTML = '<p class="text-gray-700">No standings data available.</p>';
-            }
-        }
-
-        loadYears();
-    </script>
-</body>
-</html>
+    res.send(leagueHtml);
+  } catch (error) {
+    console.error('Error fetching league data:', error);
+    res.status(500).send('Error loading league data. Please try again later.');
+  }
+});
