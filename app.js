@@ -1,5 +1,6 @@
 const express = require('express');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
 const { Sequelize, DataTypes } = require('sequelize');
 const YahooFantasy = require('yahoo-fantasy');
 const { AuthorizationCode } = require('simple-oauth2');
@@ -39,12 +40,21 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Session middleware
+// Session middleware with PostgreSQL store
 app.use(session({
+  store: new pgSession({
+    conObject: {
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false }
+    }
+  }),
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: process.env.NODE_ENV === 'production' }
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+  }
 }));
 
 // Yahoo OAuth setup
@@ -107,20 +117,27 @@ app.get('/auth/yahoo', (req, res) => {
     redirect_uri: redirectUri,
     scope: 'openid fspt-r',
   });
+  console.log('Redirecting to Yahoo authorization URL:', authorizationUri);
   res.redirect(authorizationUri);
 });
 
 app.get('/auth/yahoo/callback', async (req, res) => {
   try {
     const { code } = req.query;
+    console.log('Received auth code:', code);
+
     const tokenResponse = await client.getToken({
       code,
       redirect_uri: redirectUri
     });
+    console.log('Token response received:', JSON.stringify(tokenResponse, null, 2));
 
     const yahooId = tokenResponse.token.id_token; // You might need to decode this to get the actual Yahoo ID
+    console.log('Yahoo ID:', yahooId);
+
     let user = await User.findOne({ where: { yahooId } });
     if (!user) {
+      console.log('Creating new user');
       user = await User.create({
         yahooId,
         accessToken: tokenResponse.token.access_token,
@@ -128,6 +145,7 @@ app.get('/auth/yahoo/callback', async (req, res) => {
         tokenExpiry: new Date(tokenResponse.token.expires_at)
       });
     } else {
+      console.log('Updating existing user');
       await user.update({
         accessToken: tokenResponse.token.access_token,
         refreshToken: tokenResponse.token.refresh_token,
@@ -135,10 +153,12 @@ app.get('/auth/yahoo/callback', async (req, res) => {
       });
     }
     req.session.userId = user.id;
+    console.log('User authenticated, redirecting to dashboard');
     res.redirect('/dashboard');
   } catch (error) {
-    console.error('Error in auth callback:', error);
-    res.redirect('/auth/yahoo');
+    console.error('Detailed error in auth callback:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).send('Authentication failed. Please try again.');
   }
 });
 
