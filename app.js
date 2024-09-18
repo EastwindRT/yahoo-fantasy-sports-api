@@ -6,6 +6,8 @@ const YahooFantasy = require('yahoo-fantasy');
 const { AuthorizationCode } = require('simple-oauth2');
 const dotenv = require('dotenv');
 const path = require('path');
+const crypto = require('crypto');
+
 
 dotenv.config();
 
@@ -138,9 +140,13 @@ app.get('/', (req, res) => {
 });
 
 app.get('/auth/yahoo', (req, res) => {
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.oauthState = state;
+
   const authorizationUri = client.authorizeURL({
     redirect_uri: process.env.YAHOO_REDIRECT_URI,
     scope: 'openid fspt-r',
+    state: state
   });
   console.log('Generated authorization URI:', authorizationUri);
   res.redirect(authorizationUri);
@@ -155,12 +161,17 @@ app.get('/auth/yahoo/callback', async (req, res) => {
 
   if (req.query.error) {
     console.error('OAuth error:', req.query.error);
-    return res.status(400).send(`OAuth error: ${req.query.error}. Description: ${req.query.error_description}`);
+    return res.redirect('/auth/yahoo'); // Redirect back to the start of the auth flow
   }
 
   if (!req.query.code) {
     console.error('No code provided in callback');
-    return res.status(400).send('No code provided in callback.');
+    return res.redirect('/auth/yahoo'); // Redirect back to the start of the auth flow
+  }
+
+  if (req.query.state !== req.session.oauthState) {
+    console.error('State mismatch. Expected:', req.session.oauthState, 'Received:', req.query.state);
+    return res.redirect('/auth/yahoo'); // Redirect back to the start of the auth flow
   }
 
   try {
@@ -182,6 +193,7 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     req.session.save((err) => {
       if (err) {
         console.error('Error saving session:', err);
+        return res.redirect('/auth/yahoo'); // Redirect back to the start of the auth flow
       }
       console.log('Session saved. New session data:', req.session);
       res.redirect('/dashboard');
@@ -191,14 +203,16 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     if (error.data && error.data.payload) {
       console.error('Error payload:', error.data.payload);
     }
-    if (!res.headersSent) {
-      return res.status(500).json({ 
-        error: 'Authentication failed', 
-        details: error.message,
-        stack: error.stack,
-        query: req.query
-      });
+    if (error.data && error.data.payload && error.data.payload.error === 'invalid_grant') {
+      console.log('Invalid grant error. Redirecting to start of auth flow.');
+      return res.redirect('/auth/yahoo');
     }
+    res.status(500).json({ 
+      error: 'Authentication failed', 
+      details: error.message,
+      stack: error.stack,
+      query: req.query
+    });
   }
 });
 
@@ -222,7 +236,10 @@ app.get('/dashboard', ensureToken, async (req, res) => {
       });
       console.log('User leagues fetched successfully');
     }
-
+    if (!req.session.yahooToken) {
+      console.log('No Yahoo token in session, redirecting to /auth/yahoo');
+      return res.redirect('/auth/yahoo');
+    }
     console.log('Rendering dashboard HTML');
     const dashboardHtml = `
       <!DOCTYPE html>
