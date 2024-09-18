@@ -20,27 +20,12 @@ const pool = new Pool({
   }
 });
 
-// Create session table if it doesn't exist
-pool.query(`
-  CREATE TABLE IF NOT EXISTS "session" (
-    "sid" varchar NOT NULL COLLATE "default",
-    "sess" json NOT NULL,
-    "expire" timestamp(6) NOT NULL
-  )
-  WITH (OIDS=FALSE);
-  ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE;
-  CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
-`).then(() => {
-  console.log("Session table created or already exists.");
-}).catch(err => {
-  console.error("Error creating session table:", err);
-});
-
 // Logging environment variables (be careful not to log sensitive information in production)
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
 console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
 console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI);
 console.log('DATABASE_URL:', process.env.DATABASE_URL ? 'Set' : 'Not set');
+console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? 'Set' : 'Not set');
 
 // Initialize YahooFantasy
 const yf = new YahooFantasy(
@@ -66,7 +51,9 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Session middleware with PostgreSQL store
+// Session middleware
+// Uncomment the following block to use PostgreSQL session store
+/*
 app.use(session({
   store: new pgSession({
     pool: pool,
@@ -80,6 +67,25 @@ app.use(session({
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   }
 }));
+*/
+
+// Temporary in-memory session store for testing
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your_session_secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+  }
+}));
+
+// Debugging middleware to log session information
+app.use((req, res, next) => {
+  console.log('Session ID:', req.sessionID);
+  console.log('Session Data:', req.session);
+  next();
+});
 
 // Helper function to refresh token
 async function refreshAccessToken(refreshToken) {
@@ -98,6 +104,9 @@ async function refreshAccessToken(refreshToken) {
 // Middleware to check and refresh token if necessary
 async function ensureToken(req, res, next) {
   console.log('Entering ensureToken middleware');
+  console.log('Session ID:', req.sessionID);
+  console.log('Session Data:', req.session);
+
   if (!req.session.yahooToken) {
     console.log('No Yahoo token in session, redirecting to /auth/yahoo');
     return res.redirect('/auth/yahoo');
@@ -139,6 +148,8 @@ app.get('/auth/yahoo', (req, res) => {
 
 app.get('/auth/yahoo/callback', async (req, res) => {
   console.log('Entering /auth/yahoo/callback route');
+  console.log('Session ID before token storage:', req.sessionID);
+  console.log('Session Data before token storage:', req.session);
   console.log('Full request query:', req.query);
   console.log('Referer:', req.get('Referer'));
 
@@ -167,8 +178,14 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     console.log('Setting user token for YahooFantasy');
     yf.setUserToken(accessToken.token.access_token);
 
-    console.log('Redirecting to dashboard');
-    return res.redirect('/dashboard');
+    // Force session save
+    req.session.save((err) => {
+      if (err) {
+        console.error('Error saving session:', err);
+      }
+      console.log('Session saved. New session data:', req.session);
+      res.redirect('/dashboard');
+    });
   } catch (error) {
     console.error('Authentication error:', error);
     if (error.data && error.data.payload) {
@@ -279,25 +296,6 @@ app.get('/dashboard', ensureToken, async (req, res) => {
   }
 });
 
-app.get('/direct-dashboard', (req, res) => {
-  console.log('Serving direct dashboard HTML');
-  const dashboardHtml = `
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Direct Dashboard</title>
-    </head>
-    <body>
-      <h1>This is a direct dashboard page</h1>
-      <p>If you can see this, HTML serving is working correctly.</p>
-    </body>
-    </html>
-  `;
-  res.send(dashboardHtml);
-});
-
 app.get('/myLeagues', ensureToken, async (req, res) => {
   console.log('Entering /myLeagues route');
   try {
@@ -373,25 +371,15 @@ app.get('/logout', (req, res) => {
   });
 });
 
-app.get('/debug', (req, res) => {
-  console.log('Entering /debug route');
+app.get('/debug/session', (req, res) => {
+  console.log('Entering /debug/session route');
   res.json({
-    session: {
-      exists: !!req.session,
-      yahooToken: req.session.yahooToken ? {
-        exists: true,
-        expiresAt: req.session.yahooToken.expires_at,
-        isValid: new Date(req.session.yahooToken.expires_at) > new Date()
-      } : null
-    },
-    env: {
-      NODE_ENV: process.env.NODE_ENV,
-      PORT: process.env.PORT,
-      YAHOO_REDIRECT_URI: process.env.YAHOO_REDIRECT_URI,
-      DATABASE_URL: process.env.DATABASE_URL ? 'Set' : 'Not set',
-      YAHOO_APPLICATION_KEY: process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set',
-      YAHOO_APPLICATION_SECRET: process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set'
-    }
+    sessionID: req.sessionID,
+    session: req.session,
+    yahooToken: req.session.yahooToken ? {
+      exists: true,
+      expiresAt: req.session.yahooToken.expires_at
+    } : null
   });
 });
 
@@ -406,8 +394,18 @@ app.use((err, req, res, next) => {
 });
 
 // Start the server
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Server running on port ${port}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    // Close database connections here if any
+    process.exit(0);
+  });
 });
 
 // Global error handler for unhandled promises
@@ -416,3 +414,5 @@ process.on('unhandledRejection', (reason, promise) => {
   // In a production environment, you might want to do some cleanup and restart the server
   // process.exit(1);
 });
+
+module.exports = app; // For testing purposes
