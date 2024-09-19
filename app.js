@@ -389,4 +389,18 @@ process.on('SIGTERM', () => {
   server.close(() => {
     console.log('HTTP server closed');
     // Close database connections here if any
-    process.
+    pool.end(() => {
+      console.log('Database connection pool closed');
+      process.exit(0);
+    });
+  });
+});
+
+// Global error handler for unhandled promises
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // In a production environment, you might want to do some cleanup and restart the server
+  // process.exit(1);
+});
+
+module.exports = app;
