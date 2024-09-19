@@ -60,7 +60,7 @@ app.use(session({
   }),
   secret: process.env.SESSION_SECRET || 'your_session_secret',
   resave: false,
-  saveUninitialized: true,
+  saveUninitialized: false,
   cookie: { 
     secure: process.env.NODE_ENV === 'production',
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
@@ -127,15 +127,20 @@ app.get('/', (req, res) => {
 app.get('/auth/yahoo', (req, res) => {
   const state = crypto.randomBytes(16).toString('hex');
   req.session.oauthState = state;
-
-  const authorizationUri = client.authorizeURL({
-    redirect_uri: process.env.YAHOO_REDIRECT_URI,
-    scope: 'openid fspt-r',
-    state: state
+  req.session.save((err) => {
+    if (err) {
+      console.error('Error saving session:', err);
+      return res.status(500).send('Error initiating authentication');
+    }
+    const authorizationUri = client.authorizeURL({
+      redirect_uri: process.env.YAHOO_REDIRECT_URI,
+      scope: 'openid fspt-r',
+      state: state
+    });
+    console.log('Generated authorization URI:', authorizationUri);
+    console.log('Stored state in session:', state);
+    res.redirect(authorizationUri);
   });
-  console.log('Generated authorization URI:', authorizationUri);
-  console.log('Stored state in session:', state);
-  res.redirect(authorizationUri);
 });
 
 app.get('/auth/yahoo/callback', async (req, res) => {
@@ -170,9 +175,14 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     console.log('Access Token received:', accessToken.token);
 
     req.session.yahooToken = accessToken.token;
-    yf.setUserToken(accessToken.token.access_token);
-
-    res.redirect('/dashboard');
+    req.session.save((err) => {
+      if (err) {
+        console.error('Error saving session:', err);
+        return res.status(500).send('Error completing authentication');
+      }
+      yf.setUserToken(accessToken.token.access_token);
+      res.redirect('/dashboard');
+    });
   } catch (error) {
     console.error('Authentication error:', error);
     if (error.data && error.data.payload) {
@@ -368,39 +378,38 @@ app.get('/debug/session', (req, res) => {
   });
 });
 
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({
-    error: 'Internal Server Error',
-    message: err.message,
-    stack: process.env.NODE_ENV === 'production' ? '🥞' : err.stack
-  });
-});
-
-// Start the server
-const server = app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
-
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM signal received: closing HTTP server');
-  server.close(() => {
-    console.log('HTTP server closed');
-    // Close database connections here if any
-    pool.end(() => {
-      console.log('Database connection pool closed');
-      process.exit(0);
+    app.use((err, req, res, next) => {
+      console.error('Unhandled error:', err);
+      res.status(500).json({
+        error: 'Internal Server Error',
+        message: err.message,
+        stack: process.env.NODE_ENV === 'production' ? '🥞' : err.stack
+      });
     });
-  });
-});
 
-// Global error handler for unhandled promises
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // In a production environment, you might want to do some cleanup and restart the server
-  // process.exit(1);
-});
+    // Start the server
+    const server = app.listen(port, () => {
+      console.log(`Server running on port ${port}`);
+    });
 
-module.exports = app;
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('SIGTERM signal received: closing HTTP server');
+      server.close(() => {
+        console.log('HTTP server closed');
+        // Close database connections here if any
+        pool.end(() => {
+          console.log('Database connection pool closed');
+          process.exit(0);
+        });
+      });
+    });
+
+    // Global error handler for unhandled promises
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      // In a production environment, you might want to do some cleanup and restart the server
+      // process.exit(1);
+    });
+
+    module.exports = app; // For testing purposes
