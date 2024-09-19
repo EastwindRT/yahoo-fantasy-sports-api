@@ -1,5 +1,7 @@
 const express = require('express');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
+const { Pool } = require('pg');
 const YahooFantasy = require('yahoo-fantasy');
 const { AuthorizationCode } = require('simple-oauth2');
 const dotenv = require('dotenv');
@@ -11,10 +13,19 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+// PostgreSQL connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+
 // Logging environment variables (be careful not to log sensitive information in production)
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
 console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
 console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI);
+console.log('DATABASE_URL:', process.env.DATABASE_URL ? 'Set' : 'Not set');
 console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? 'Set' : 'Not set');
 
 // Initialize YahooFantasy
@@ -41,16 +52,18 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Session middleware
-const MemoryStore = session.MemoryStore;
+// Session middleware with PostgreSQL store
 app.use(session({
-  store: new MemoryStore(),
-  secret: process.env.SESSION_SECRET || 'your_session_secret',
+  store: new pgSession({
+    pool: pool,
+    tableName: 'session'
+  }),
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: true,
   cookie: { 
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   }
 }));
 
@@ -58,7 +71,7 @@ app.use(session({
 app.use((req, res, next) => {
   console.log('Debugging Middleware:');
   console.log('Session ID:', req.sessionID);
-  console.log('Session:', req.session);
+  console.log('Session:', JSON.stringify(req.session, null, 2));
   console.log('OAuth State:', req.session.oauthState);
   next();
 });
@@ -81,7 +94,7 @@ async function refreshAccessToken(refreshToken) {
 async function ensureToken(req, res, next) {
   console.log('Entering ensureToken middleware');
   console.log('Session ID:', req.sessionID);
-  console.log('Session Data:', req.session);
+  console.log('Session Data:', JSON.stringify(req.session, null, 2));
 
   if (!req.session.yahooToken) {
     console.log('No Yahoo token in session, redirecting to /auth/yahoo');
@@ -122,6 +135,7 @@ app.get('/auth/yahoo', (req, res) => {
       return res.status(500).send('Error initiating authentication');
     }
     console.log('State saved in session:', state);
+    console.log('Session after saving state:', JSON.stringify(req.session, null, 2));
     const authorizationUri = client.authorizeURL({
       redirect_uri: process.env.YAHOO_REDIRECT_URI,
       scope: 'openid fspt-r',
@@ -135,7 +149,7 @@ app.get('/auth/yahoo', (req, res) => {
 app.get('/auth/yahoo/callback', async (req, res) => {
   console.log('Entering /auth/yahoo/callback route');
   console.log('Session ID:', req.sessionID);
-  console.log('Session:', req.session);
+  console.log('Session:', JSON.stringify(req.session, null, 2));
   console.log('OAuth State in session:', req.session.oauthState);
   console.log('Query parameters:', req.query);
 
@@ -174,6 +188,7 @@ app.get('/auth/yahoo/callback', async (req, res) => {
         console.error('Error saving session:', err);
         return res.status(500).send('Error completing authentication');
       }
+      console.log('Session after saving token:', JSON.stringify(req.session, null, 2));
       yf.setUserToken(accessToken.token.access_token);
       res.redirect('/dashboard');
     });
@@ -372,37 +387,39 @@ app.get('/debug/session', (req, res) => {
   });
 });
 
-    // ... (previous code remains the same)
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({
+    error: 'Internal Server Error',
+    message: err.message,
+    stack: process.env.NODE_ENV === 'production' ? '🥞' : err.stack
+  });
+});
 
-    // Error handling middleware
-    app.use((err, req, res, next) => {
-      console.error('Unhandled error:', err);
-      res.status(500).json({
-        error: 'Internal Server Error',
-        message: err.message,
-        stack: process.env.NODE_ENV === 'production' ? '🥞' : err.stack
-      });
+// Start the server
+const server = app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+    // Close database connections here if any
+    pool.end(() => {
+      console.log('Database connection pool closed');
+      process.exit(0);
     });
+  });
+});
 
-    // Start the server
-    const server = app.listen(port, () => {
-      console.log(`Server running on port ${port}`);
-    });
+// Global error handler for unhandled promises
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // In a production environment, you might want to do some cleanup and restart the server
+  // process.exit(1);
+});
 
-    // Graceful shutdown
-    process.on('SIGTERM', () => {
-      console.log('SIGTERM signal received: closing HTTP server');
-      server.close(() => {
-        console.log('HTTP server closed');
-        process.exit(0);
-      });
-    });
-
-    // Global error handler for unhandled promises
-    process.on('unhandledRejection', (reason, promise) => {
-      console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-      // In a production environment, you might want to do some cleanup and restart the server
-      // process.exit(1);
-    });
-
-    module.exports = app; // For testing purposes
+module.exports = app; // For testing purposes
