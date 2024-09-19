@@ -8,7 +8,6 @@ const dotenv = require('dotenv');
 const path = require('path');
 const crypto = require('crypto');
 
-
 dotenv.config();
 
 const app = express();
@@ -54,8 +53,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Session middleware
-// Uncomment the following block to use PostgreSQL session store
-/*
 app.use(session({
   store: new pgSession({
     pool: pool,
@@ -63,19 +60,7 @@ app.use(session({
   }),
   secret: process.env.SESSION_SECRET || 'your_session_secret',
   resave: false,
-  saveUninitialized: false,
-  cookie: { 
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
-  }
-}));
-*/
-
-// Temporary in-memory session store for testing
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'your_session_secret',
-  resave: false,
-  saveUninitialized: false,
+  saveUninitialized: true,
   cookie: { 
     secure: process.env.NODE_ENV === 'production',
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
@@ -149,29 +134,30 @@ app.get('/auth/yahoo', (req, res) => {
     state: state
   });
   console.log('Generated authorization URI:', authorizationUri);
+  console.log('Stored state in session:', state);
   res.redirect(authorizationUri);
 });
 
 app.get('/auth/yahoo/callback', async (req, res) => {
   console.log('Entering /auth/yahoo/callback route');
-  console.log('Session ID before token storage:', req.sessionID);
-  console.log('Session Data before token storage:', req.session);
+  console.log('Session ID:', req.sessionID);
+  console.log('Session Data:', req.session);
   console.log('Full request query:', req.query);
   console.log('Referer:', req.get('Referer'));
 
   if (req.query.error) {
     console.error('OAuth error:', req.query.error);
-    return res.redirect('/auth/yahoo'); // Redirect back to the start of the auth flow
+    return res.redirect('/auth/yahoo');
   }
 
   if (!req.query.code) {
     console.error('No code provided in callback');
-    return res.redirect('/auth/yahoo'); // Redirect back to the start of the auth flow
+    return res.redirect('/auth/yahoo');
   }
 
   if (req.query.state !== req.session.oauthState) {
     console.error('State mismatch. Expected:', req.session.oauthState, 'Received:', req.query.state);
-    return res.redirect('/auth/yahoo'); // Redirect back to the start of the auth flow
+    return res.redirect('/auth/yahoo');
   }
 
   try {
@@ -183,29 +169,14 @@ app.get('/auth/yahoo/callback', async (req, res) => {
     const accessToken = await client.getToken(tokenParams);
     console.log('Access Token received:', accessToken.token);
 
-    console.log('Storing token in session');
     req.session.yahooToken = accessToken.token;
-
-    console.log('Setting user token for YahooFantasy');
     yf.setUserToken(accessToken.token.access_token);
 
-    // Force session save
-    req.session.save((err) => {
-      if (err) {
-        console.error('Error saving session:', err);
-        return res.redirect('/auth/yahoo'); // Redirect back to the start of the auth flow
-      }
-      console.log('Session saved. New session data:', req.session);
-      res.redirect('/dashboard');
-    });
+    res.redirect('/dashboard');
   } catch (error) {
     console.error('Authentication error:', error);
     if (error.data && error.data.payload) {
       console.error('Error payload:', error.data.payload);
-    }
-    if (error.data && error.data.payload && error.data.payload.error === 'invalid_grant') {
-      console.log('Invalid grant error. Redirecting to start of auth flow.');
-      return res.redirect('/auth/yahoo');
     }
     res.status(500).json({ 
       error: 'Authentication failed', 
@@ -236,10 +207,7 @@ app.get('/dashboard', ensureToken, async (req, res) => {
       });
       console.log('User leagues fetched successfully');
     }
-    if (!req.session.yahooToken) {
-      console.log('No Yahoo token in session, redirecting to /auth/yahoo');
-      return res.redirect('/auth/yahoo');
-    }
+
     console.log('Rendering dashboard HTML');
     const dashboardHtml = `
       <!DOCTYPE html>
@@ -421,15 +389,4 @@ process.on('SIGTERM', () => {
   server.close(() => {
     console.log('HTTP server closed');
     // Close database connections here if any
-    process.exit(0);
-  });
-});
-
-// Global error handler for unhandled promises
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // In a production environment, you might want to do some cleanup and restart the server
-  // process.exit(1);
-});
-
-module.exports = app; // For testing purposes
+    process.
