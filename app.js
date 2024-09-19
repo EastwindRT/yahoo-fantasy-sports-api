@@ -1,7 +1,5 @@
 const express = require('express');
 const session = require('express-session');
-const pgSession = require('connect-pg-simple')(session);
-const { Pool } = require('pg');
 const YahooFantasy = require('yahoo-fantasy');
 const { AuthorizationCode } = require('simple-oauth2');
 const dotenv = require('dotenv');
@@ -13,19 +11,10 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// PostgreSQL connection pool
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
-
 // Logging environment variables (be careful not to log sensitive information in production)
 console.log('YAHOO_APPLICATION_KEY:', process.env.YAHOO_APPLICATION_KEY ? 'Set' : 'Not set');
 console.log('YAHOO_APPLICATION_SECRET:', process.env.YAHOO_APPLICATION_SECRET ? 'Set' : 'Not set');
 console.log('YAHOO_REDIRECT_URI:', process.env.YAHOO_REDIRECT_URI);
-console.log('DATABASE_URL:', process.env.DATABASE_URL ? 'Set' : 'Not set');
 console.log('SESSION_SECRET:', process.env.SESSION_SECRET ? 'Set' : 'Not set');
 
 // Initialize YahooFantasy
@@ -53,24 +42,24 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Session middleware
+const MemoryStore = session.MemoryStore;
 app.use(session({
-  store: new pgSession({
-    pool: pool,
-    tableName: 'session'
-  }),
+  store: new MemoryStore(),
   secret: process.env.SESSION_SECRET || 'your_session_secret',
   resave: false,
-  saveUninitialized: false,
+  saveUninitialized: true,
   cookie: { 
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
 
-// Debugging middleware to log session information
+// Debugging middleware
 app.use((req, res, next) => {
+  console.log('Debugging Middleware:');
   console.log('Session ID:', req.sessionID);
-  console.log('Session Data:', req.session);
+  console.log('Session:', req.session);
+  console.log('OAuth State:', req.session.oauthState);
   next();
 });
 
@@ -132,13 +121,13 @@ app.get('/auth/yahoo', (req, res) => {
       console.error('Error saving session:', err);
       return res.status(500).send('Error initiating authentication');
     }
+    console.log('State saved in session:', state);
     const authorizationUri = client.authorizeURL({
       redirect_uri: process.env.YAHOO_REDIRECT_URI,
       scope: 'openid fspt-r',
       state: state
     });
     console.log('Generated authorization URI:', authorizationUri);
-    console.log('Stored state in session:', state);
     res.redirect(authorizationUri);
   });
 });
@@ -146,9 +135,9 @@ app.get('/auth/yahoo', (req, res) => {
 app.get('/auth/yahoo/callback', async (req, res) => {
   console.log('Entering /auth/yahoo/callback route');
   console.log('Session ID:', req.sessionID);
-  console.log('Session Data:', req.session);
-  console.log('Full request query:', req.query);
-  console.log('Referer:', req.get('Referer'));
+  console.log('Session:', req.session);
+  console.log('OAuth State in session:', req.session.oauthState);
+  console.log('Query parameters:', req.query);
 
   if (req.query.error) {
     console.error('OAuth error:', req.query.error);
@@ -157,6 +146,11 @@ app.get('/auth/yahoo/callback', async (req, res) => {
 
   if (!req.query.code) {
     console.error('No code provided in callback');
+    return res.redirect('/auth/yahoo');
+  }
+
+  if (!req.session.oauthState) {
+    console.error('No OAuth state found in session. Session may have been lost.');
     return res.redirect('/auth/yahoo');
   }
 
@@ -378,6 +372,9 @@ app.get('/debug/session', (req, res) => {
   });
 });
 
+    // ... (previous code remains the same)
+
+    // Error handling middleware
     app.use((err, req, res, next) => {
       console.error('Unhandled error:', err);
       res.status(500).json({
@@ -397,11 +394,7 @@ app.get('/debug/session', (req, res) => {
       console.log('SIGTERM signal received: closing HTTP server');
       server.close(() => {
         console.log('HTTP server closed');
-        // Close database connections here if any
-        pool.end(() => {
-          console.log('Database connection pool closed');
-          process.exit(0);
-        });
+        process.exit(0);
       });
     });
 
